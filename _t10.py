@@ -90,9 +90,14 @@ def walk(obj, base="", seen=None, depth=0, max_depth=3):
 def main() -> int:
     import app as A
 
+    # 这份测试只关心 DeskApi 把什么挂到 js_api 上，**不读仓库内容** ——
+    # 所以 repo 只是个"某个路径"的占位值，钉死某个人的绝对路径没有语义。
+    # 写成不存在的目录还能顺带证明：属性暴露与否与路径存不存在无关。
+    REPO_STR = str(Path(__file__).resolve().parent / "_无此目录")
+
     print("一、DeskApi 交给 pywebview 之前是什么样")
     print("-" * 72)
-    api = A.DeskApi(config={"repo": "D:/router/blog"})   # __init__ 里本来就是 _win = None
+    api = A.DeskApi(config={"repo": "REPO_STR"})   # __init__ 里本来就是 _win = None
 
     # 造一个"假的但足以骗过判据"的 pywebview Window：它有 __module__、
     # 且 getattr 它任意属性都会返回一个更深的对象（模拟 .NET 那条属性链）。
@@ -139,7 +144,7 @@ def main() -> int:
     #   变异①（把 `__init__` 里的 `self._win` 改回 `self.win`）**根本走不到**，
     #   测试永远绿 —— 这就是「夹具缺输入」的第三例（前两例见 AGENTS 事故表）。
     #   ⇒ 判据必须由**生产代码里的那行赋值**产生，不能由测试自己造。
-    api2 = A.DeskApi(win=FakeWindow(), config={"repo": "D:/router/blog"})
+    api2 = A.DeskApi(win=FakeWindow(), config={"repo": "REPO_STR"})
     bad_new = walk(api2)
     for full, typ in bad_new:
         print(f"      {full}（{typ}）")
@@ -162,7 +167,7 @@ def main() -> int:
     print()
     print("四、功能没被修掉：页面还能调到窗口方法")
     print("-" * 72)
-    api3 = A.DeskApi(config={"repo": "D:/router/blog"})
+    api3 = A.DeskApi(config={"repo": "REPO_STR"})
     for m in ("win_close", "win_min", "win_max", "win_pos", "win_moveto",
               "get_config", "set_config"):
         chk(f"④ api.{m} 仍是可被 JS 调用的方法",
@@ -183,7 +188,7 @@ def main() -> int:
         def native(self):
             return FakeNative()
 
-    api4 = A.DeskApi(config={"repo": "D:/router/blog"})
+    api4 = A.DeskApi(config={"repo": "REPO_STR"})
     api4._win = RecordingWin()
     r = api4.win_pos()
     chk("④ win_pos() 真的从窗口读到了位置", r.get("x") == 11 and r.get("y") == 22,

@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 from PyInstaller.utils.hooks import collect_all
 
 datas = [('ui', 'ui')]
@@ -39,7 +40,10 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['D:/router/blog-desk/writedesk.ico'],
+    # 图标走相对路径：spec 文件与 writedesk.ico 在同一目录，SPECPATH 是
+    # PyInstaller 注入的内置变量（spec 所在目录）。原来写的是本机绝对路径，
+    # 换台机器打包就找不到图标了。
+    icon=[os.path.join(SPECPATH, 'writedesk.ico')],
 )
 coll = COLLECT(
     exe,

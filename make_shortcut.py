@@ -36,19 +36,19 @@ APP_NAME = "写作台"
 # ── 装在哪：`%LOCALAPPDATA%\Programs\写作台\` ────────────────────────
 # 这是 Windows 上"当前用户级应用"的常规位置。
 #
-# ★ 为什么不沿用原来的 `D:\router\写作台`（2026-10-09 实测踩坑）：
-#   `D:\router` 整棵树被打了 **`Mandatory Label\Low Mandatory Level` 低完整性标签**
-#   （目录上还挂着 `S-1-4-588871634-737494949` 这个沙箱 SID 和 Everyone 的
-#    DENY DELETE_CHILD；`D:\router\blog` 也一样）。低完整性标签会被整棵子树继承，
+# ★ 为什么不沿用最初那个装在 D 盘工作区里的位置（2026-10-09 实测踩坑）：
+#   那个工作区整棵树被打上了 **`Mandatory Label\Low Mandatory Level` 低完整性标签**
+#   （目录上还挂着一个沙箱 SID 和 Everyone 的 DENY DELETE_CHILD；同一个工作区下的
+#    博客仓库也一样）。低完整性标签会被整棵子树继承，
 #   而**带 Low 标签的 exe 根本起不来** —— PyInstaller 的 bootloader 连自己这个文件
 #   都打不开（`_wfopen` 返回 NULL），启动即报
 #     "Could not load PyInstaller's embedded PKG archive from the executable"
 #
 #   实证（同一份 exe 字节，只换目录）：
-#     `C:\...\Temp\he.exe`            ✅ 能跑
-#     `D:\_pytest2\he.exe`            ✅ 能跑
-#     `D:\router\_pyitest\he.exe`     ❌ cannot open archive
-#     `D:\router\_acl2\he.exe`        ❌ 同上
+#     `%TEMP%\he.exe`                  ✅ 能跑
+#     另一个 D 盘普通目录 `he.exe`     ✅ 能跑
+#     低完整性工作区下的 `he.exe`       ❌ cannot open archive
+#     再开一个同样带标签的目录 `he.exe` ❌ 同上
 #     → 对那个文件 `icacls … /setintegritylevel Medium` 后**立刻** ✅
 #     → 只删掉目录的 DENY ACE（不动标签）仍然 ❌  ⇒ 与 DENY 无关，就是那条 Low 标签
 #   顺带排除掉的：归档/cookie 完好、bootloader 与官方 wheel 逐字节一致

@@ -40,7 +40,10 @@ from PIL import Image, ImageDraw  # noqa: E402
 from lib.proc import CREATE_NO_WINDOW  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
-ART = Path(r"D:\router\blog\public\art")
+# 图标素材取自站点仓库的 public/art。走 BLOG_REPO 环境变量，不钉死某人的绝对路径 ——
+# 这个脚本要从「博客仓库 + 本写作台」两处取材，写死一处就等于把机器布局公开出去。
+_BLOG = os.environ.get("BLOG_REPO")
+ART = Path(_BLOG) / "public" / "art" if _BLOG else HERE.parent / "blog" / "public" / "art"
 CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
 
 SIZE = 512                      # 母版边长（256 的 2 倍，缩下去更干净）

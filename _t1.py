@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
 """内容层只读冒烟测试：不改任何文件。"""
-import sys, json
+import sys, os, json
 from pathlib import Path
-sys.path.insert(0, r"D:/router/blog-desk")
+
+# 路径不钉死某个人的机器：测试代码放哪就从哪导入，待测仓库走 BLOG_REPO。
+# 想指到真仓库跑，设 BLOG_REPO 环境变量即可。
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 from lib.content import Content
 
-c = Content(Path(r"D:/router/blog"))
+c = Content(Path(os.environ.get("BLOG_REPO", str(HERE / "_fixture"))))
 posts = c.list_posts()
 print(f"文章 {len(posts)} 篇:")
 for p in posts:

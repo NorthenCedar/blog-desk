@@ -202,10 +202,12 @@ def main() -> int:
         print(f"  快捷方式：{human}  {lnk}")
 
     # ③ 旧的 .bat 与旧安装位置：能请走就请走，请不动只提示（不影响用）
+    #    那个 D 盘工作区历史上带过 Low 完整性标签（有 DENY DELETE_CHILD），
+    #    所以对那个位置的删除很可能失败 —— 失败是预期内的，只提示不报错。
     for old in (desktop() / f"{APP_NAME}.bat", Path(r"D:\router") / APP_NAME):
         if old.exists():
             print(("  旧的已移入回收站：" if recycle(old)
-                   else "  ⚠ 请不动（`D:\\router` 上有 DENY DELETE_CHILD），"
+                   else "  ⚠ 请不动（那个目录上有 DENY DELETE_CHILD），"
                         "想清掉请手动删：") + str(old))
 
     # ④ ★★ 门闩：真跑一次。不过就不许说"打好了"。

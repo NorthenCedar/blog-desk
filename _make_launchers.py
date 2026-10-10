@@ -8,11 +8,30 @@
   ③ 行尾 CRLF。
 """
 from pathlib import Path
+import os
+import sys
 
-APPDIR = Path(r"D:\router\blog-desk")
-DESKTOP = Path(r"C:\Users\A2817\OneDrive\Desktop")
-PYDIR = Path(r"C:\Users\A2817\.workbuddy\binaries\python\envs\default\Scripts")
-PY = PYDIR / "python.exe"
+# 路径一律现算，不写死某个人的机器布局：
+#   APPDIR   —— 脚本自身所在目录（也就是仓库根）
+#   DESKTOP  —— 走环境变量，OneDrive 重定向的机器上 `%USERPROFILE%\Desktop` 不存在
+#   PYDIR    —— 找当前解释器的 Scripts 目录，跟跑这个脚本的 Python 保持一致
+APPDIR = Path(__file__).resolve().parent
+# 桌面目录不能假设是 %USERPROFILE%\Desktop：这台机器的桌面被 OneDrive 重定向过
+# （真实位置在 OneDrive 下），写死前者会直接跳过桌面快捷方式的生成。
+# 依次问系统环境变量、再退到 OneDrive 常见目录，最后才是传统位置。
+def _find_desktop() -> Path:
+    candidates = []
+    if os.environ.get("OneDrive"):
+        candidates.append(Path(os.environ["OneDrive"]) / "Desktop")
+    candidates.append(Path(os.environ.get("USERPROFILE", str(APPDIR))) / "Desktop")
+    for c in candidates:
+        if c.is_dir():
+            return c
+    return candidates[-1]
+
+DESKTOP = _find_desktop()
+PYDIR = Path(sys.executable).resolve().parent
+PY = Path(sys.executable).resolve()
 PYW = PYDIR / "pythonw.exe"
 
 HEAD = "@echo off\nchcp 936 >nul\n"
