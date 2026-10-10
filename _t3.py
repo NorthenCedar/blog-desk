@@ -96,6 +96,21 @@ def _make_sandbox() -> Path:
 
 
 REPO = _make_sandbox()
+
+# ★ /api/config 会**真的调 save_config() 写磁盘**。而 save_config 写的是
+#   `lib.config.CONFIG_PATH` —— 也就是站主真实的 config.json。
+#   之前的跑法实测把仓库路径写成了临时沙箱的路径，测完 config.json 里
+#   就留着一个指向已删除目录的 repo ⇒ 写作台下次启动直接起不来。
+#   ⇒ 在起服务之前把 CONFIG_PATH 换到临时目录，配置相关读写全落那份副本，
+#     真 config.json 一个字节都不碰。测完连沙箱一起删。
+_CFG_SANDBOX = Path(tempfile.mkdtemp(prefix="writedesk-t3-cfg-"))
+_saved_cfg_path = C.CONFIG_PATH
+C.CONFIG_PATH = _CFG_SANDBOX / "config.json"
+C.CONFIG_PATH.write_text(
+    json.dumps({"repo": str(REPO), "site": "https://example.invalid",
+                "admin_token": "", "max_kb": 300}, ensure_ascii=False),
+    encoding="utf-8")
+
 orig = C.load_config()
 cfg = dict(orig)
 
@@ -211,8 +226,12 @@ print(f"合计 {len(checks)} 项，通过 {len(checks)-len(bad)}，失败 {len(b
 if bad:
     print("失败：" + "、".join(bad))
 httpd.shutdown()
+# 还原 CONFIG_PATH 并清掉临时副本 —— 真 config.json 全程没被碰过
+C.CONFIG_PATH = _saved_cfg_path
+shutil.rmtree(_CFG_SANDBOX, ignore_errors=True)
 # 只删自己造的那个沙箱；指向真仓库跑时（BLOG_REPO）绝不能删别人的目录
 if not os.environ.get("BLOG_REPO"):
     shutil.rmtree(REPO, ignore_errors=True)
     print(f"（沙箱已清理 {REPO}）")
+print(f"（配置沙箱已清理；真配置未被触碰 → {C.CONFIG_PATH}）")
 sys.exit(1 if bad else 0)
