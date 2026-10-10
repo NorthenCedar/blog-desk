@@ -1,0 +1,561 @@
+/* 写作台 · 样式
+   ══════════════════════════════════════════════════════════════════════
+   配色/字体/间距**全部照抄博客的 src/styles/tokens.css**（值一一对应）。
+   写作台是独立应用，没法在运行时 import 那个文件，所以这里是**镜像**：
+   改了博客的 token，这里也要跟着改 —— 两边不一致就是 bug。
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ── 字体（自托管，不引 CDN —— 与站上同一份 woff2） ── */
+@font-face {
+  font-family: Archivo;
+  src: url("/fonts/archivo-latin.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("/fonts/plex-sans-400.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("/fonts/plex-sans-600.woff2") format("woff2");
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/fonts/plex-mono-400.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+
+:root {
+  /* 颜色 —— 镜像自 tokens.css */
+  --paper: #fafaf7;
+  --ink: #1a1a1a;
+  --muted: #5a5a56;
+  --hair: #d8d5ce;
+  --accent: #2d7d46;
+  --accent-ink: #266b3b;
+  --accent-wash: #edf3ec;
+  /* 深色底上的绿：对 --ink 6.26:1；对纸白只 2.66 ⇒ 只许用在深色底（侧栏） */
+  --accent-bright: #4caf50;
+  --panel: #efede7;
+  --on-band: #ffffff;
+  --on-band-sub: #dedede;
+  --on-band-meta: #b4b4b4;
+
+  /* dusk 深场（侧栏用它 —— 首页首屏同一族） */
+  --dusk-1: #0b100e;
+  --dusk-2: #131b17;
+  --dusk-3: #1e2a23;
+  --dusk-4: #3a4740;
+  --dglass-line: #ffffff1f;
+
+  /* 纸面玻璃（浅色底的卡片） */
+  --glass-bg: #ffffff5c;
+  --glass-line: #1a1a1a14;
+  --glass-shadow: 0 1px 2px #1a1a1a0a, 0 8px 28px -12px #1a1a1a24;
+
+  /* 间距 */
+  --sp-1: 0.25rem; --sp-2: 0.5rem; --sp-3: 0.75rem; --sp-4: 1rem;
+  --sp-5: 1.5rem; --sp-6: 2rem; --sp-7: 3rem; --sp-8: 4.5rem;
+
+  /* 字号 */
+  --fs-h2: 1.45rem; --fs-h3: 1.15rem; --fs-lg: 1.375rem; --fs-lede: 1.125rem;
+  --fs-body: 1.0625rem; --fs-sm: 0.875rem; --fs-xs: 0.8125rem; --fs-mono: 0.85rem;
+
+  /* 动效 */
+  --dur-fast: 120ms;
+  --dur-hover: 260ms;
+  --ease-interact: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-enter: 380ms;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* 三个窗口键（例图那套 macOS 交通灯） */
+  --tl-red: #ff5f57;
+  --tl-yellow: #febc2e;
+  --tl-green: #28c840;
+
+  /* 代码/危险色（只在本应用用，不属站上 token） */
+  --danger: #b3261e;
+  --danger-wash: #b3261e14;
+  --warn: #b45309;
+  --code-bg: #f2f1ef;
+
+  /* 字体别名（本应用自用，方便行内 style 里引用） */
+  --f-sans: "IBM Plex Sans", -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+  --f-display: Archivo, "IBM Plex Sans", sans-serif;
+
+  --sidebar-w: 232px;
+  --titlebar-h: 46px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--dusk-1);
+  color: var(--ink);
+  font-family: "IBM Plex Sans", -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: var(--fs-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 应用整体：无边框窗口，圆角由窗口裁剪（Windows 上不必做圆角） */
+#app {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) 1fr;
+  height: 100vh;
+  background: var(--paper);
+  overflow: hidden;
+}
+
+/* ══════════════════ 侧栏（dusk 深场） ══════════════════ */
+.sidebar {
+  background: linear-gradient(170deg, var(--dusk-2), var(--dusk-1) 70%);
+  color: var(--on-band-sub);
+  display: flex;
+  flex-direction: column;
+  padding: 0 0 var(--sp-4);
+  position: relative;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* 侧栏上那层极淡的绿光（与首页深场的观感一致，纯装饰） */
+.sidebar::after {
+  content: "";
+  position: absolute;
+  inset: -40% -60% auto -60%;
+  height: 60%;
+  background: radial-gradient(closest-side, #4caf5014, transparent 70%);
+  pointer-events: none;
+}
+
+/* ── 标题栏（可拖动） ── */
+.titlebar {
+  height: var(--titlebar-h);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: 0 var(--sp-4);
+  -webkit-app-region: drag;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 2;
+}
+
+/* 三个窗口键 —— 例图那套。默认是"灰点"，鼠标移到标题栏才显出各自颜色
+   （macOS 的行为；鼠标移上去才告诉你是干嘛的） */
+.lights { display: flex; gap: 8px; -webkit-app-region: no-drag; }
+.light {
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--dusk-4);
+  border: none; padding: 0; cursor: pointer;
+  display: grid; place-items: center;
+  transition: background var(--dur-fast) var(--ease-interact);
+  position: relative;
+}
+.light svg { width: 7px; height: 7px; opacity: 0; transition: opacity var(--dur-fast); }
+.titlebar:hover .light svg { opacity: 1; }
+.titlebar:hover .light.l-red { background: var(--tl-red); }
+.titlebar:hover .light.l-yellow { background: var(--tl-yellow); }
+.titlebar:hover .light.l-green { background: var(--tl-green); }
+.light:hover { filter: brightness(1.08); }
+.light svg path, .light svg line { stroke: #4a0000cc; stroke-width: 1.4; stroke-linecap: round; }
+.light.l-yellow svg path, .light.l-yellow svg line { stroke: #5a3a00cc; }
+.light.l-green svg path, .light.l-green svg line { stroke: #0a3d13cc; }
+
+.brand { padding: var(--sp-1) var(--sp-4) var(--sp-5); position: relative; z-index: 2; }
+.brand h1 {
+  margin: 0;
+  font-family: Archivo, sans-serif;
+  font-size: 1.22rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--on-band);
+}
+.brand .sub {
+  margin-top: 3px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--fs-xs);
+  color: var(--on-band-meta);
+}
+
+/* ── 导航 ── */
+.nav { display: flex; flex-direction: column; gap: 1px; padding: 0 var(--sp-2); position: relative; z-index: 2; }
+.nav button {
+  appearance: none; border: 0; background: transparent;
+  color: var(--on-band-sub);
+  font: inherit; font-size: var(--fs-sm);
+  text-align: left;
+  padding: 9px var(--sp-3);
+  border-radius: 7px;
+  cursor: pointer;
+  display: flex; align-items: center; gap: var(--sp-3);
+  transition: background var(--dur-hover) var(--ease-interact),
+              color var(--dur-hover) var(--ease-interact);
+}
+.nav button .ico { width: 16px; text-align: center; opacity: 0.75; font-size: 13px; }
+.nav button:hover { background: #ffffff12; color: var(--on-band); }
+.nav button[aria-current="page"] {
+  background: #ffffff1a; color: var(--on-band);
+  box-shadow: inset 2px 0 0 var(--accent-bright, #4caf50);
+}
+.nav button[aria-current="page"] .ico { opacity: 1; }
+.nav .sep {
+  height: 1px; background: var(--dglass-line);
+  margin: var(--sp-3) var(--sp-3);
+}
+
+/* ── 侧栏底部状态 ── */
+.side-foot {
+  margin-top: auto; padding: var(--sp-4) var(--sp-4) 0;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11.5px;
+  line-height: 1.9;
+  color: var(--on-band-meta);
+  position: relative; z-index: 2;
+}
+.side-foot .row { display: flex; align-items: center; gap: 7px; }
+.side-foot b { color: var(--on-band-sub); font-weight: 400; }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--on-band-meta); flex-shrink: 0; }
+.dot.ok { background: #4caf50; }
+.dot.warn { background: var(--tl-yellow); }
+.dot.err { background: var(--tl-red); }
+
+/* ══════════════════ 工作区 ══════════════════ */
+.work { overflow: hidden; display: flex; flex-direction: column; background: var(--paper); }
+.work-head {
+  display: flex; align-items: baseline; gap: var(--sp-4);
+  padding: var(--sp-5) var(--sp-6) var(--sp-3);
+  border-bottom: 1px solid var(--hair);
+  flex-shrink: 0;
+}
+.work-head h2 {
+  margin: 0; font-family: Archivo, sans-serif;
+  font-size: var(--fs-h2); font-weight: 600; letter-spacing: -0.012em;
+}
+.work-head .hint {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--fs-xs); color: var(--muted);
+}
+/* 全局 .hint：正文里那些小字说明（原来只在 .work-head 下定义，别处是没样式的） */
+.hint { font-family: var(--f-mono); font-size: var(--fs-xs); color: var(--muted); }
+.work-body { flex: 1; overflow: auto; padding: var(--sp-5) var(--sp-6) var(--sp-7); }
+.view { display: none; }
+.view.on { display: block; animation: viewIn var(--dur-enter) var(--ease); }
+@keyframes viewIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+/* ── 通用控件 ── */
+.btn {
+  appearance: none; font: inherit; font-size: var(--fs-sm);
+  padding: 7px 13px; border-radius: 7px;
+  border: 1px solid var(--hair); background: var(--paper); color: var(--ink);
+  cursor: pointer;
+  transition: background var(--dur-hover) var(--ease-interact),
+              border-color var(--dur-hover) var(--ease-interact),
+              transform var(--dur-fast) var(--ease-interact);
+  white-space: nowrap;
+}
+.btn:hover { background: var(--accent-wash); border-color: #2d7d4633; }
+.btn:active { transform: translateY(1px); }
+.btn.primary {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+}
+.btn.primary:hover { background: var(--accent-ink); border-color: var(--accent-ink); }
+.btn.ghost { border-color: transparent; background: transparent; }
+.btn.ghost:hover { background: var(--accent-wash); }
+.btn.danger { color: var(--danger); border-color: #b3261e33; }
+.btn.danger:hover { background: var(--danger-wash); border-color: #b3261e55; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+.btn.sm { padding: 4px 9px; font-size: var(--fs-xs); }
+
+.row { display: flex; gap: var(--sp-3); flex-wrap: wrap; align-items: center; }
+.row.tight { gap: var(--sp-2); }
+.stack { display: flex; flex-direction: column; gap: var(--sp-4); }
+.grow { flex: 1; min-width: 0; }
+.spread { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); }
+
+input[type="text"], input[type="date"], input[type="number"], input[type="password"],
+textarea, select {
+  font: inherit; font-size: var(--fs-sm); color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--hair); border-radius: 7px;
+  padding: 7px 10px;
+  transition: border-color var(--dur-hover) var(--ease-interact),
+              box-shadow var(--dur-hover) var(--ease-interact);
+  font-family: inherit;
+}
+input:focus, textarea:focus, select:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px #2d7d461f;
+}
+textarea { resize: vertical; line-height: 1.75; }
+label.field { display: flex; flex-direction: column; gap: 5px; }
+label.field > span {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11.5px; letter-spacing: 0.02em; color: var(--muted);
+  text-transform: lowercase;
+}
+
+/* 卡片 */
+.card {
+  background: var(--paper);
+  border: 1px solid var(--hair);
+  border-radius: 10px;
+  padding: var(--sp-5);
+  box-shadow: var(--glass-shadow);
+}
+.card + .card { margin-top: var(--sp-4); }
+.card h3 {
+  margin: 0 0 var(--sp-3);
+  font-family: Archivo, sans-serif; font-size: var(--fs-h3); font-weight: 600;
+}
+
+/* 两栏（列表 + 编辑器） */
+.split { display: grid; grid-template-columns: 268px 1fr; gap: var(--sp-5); align-items: start; height: 100%; }
+.list {
+  border: 1px solid var(--hair); border-radius: 10px; overflow: hidden;
+  max-height: calc(100vh - 190px); overflow-y: auto; background: var(--paper);
+}
+.list .item {
+  padding: 10px var(--sp-4); cursor: pointer; border-bottom: 1px solid #1a1a1a0a;
+  transition: background var(--dur-hover) var(--ease-interact);
+  display: flex; flex-direction: column; gap: 3px;
+}
+.list .item:last-child { border-bottom: 0; }
+.list .item:hover { background: var(--accent-wash); }
+.list .item[aria-selected="true"] { background: var(--accent-wash); box-shadow: inset 3px 0 0 var(--accent); }
+.list .item .t { font-size: var(--fs-sm); line-height: 1.35; }
+.list .item .m {
+  font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--muted);
+  display: flex; gap: var(--sp-2); align-items: center;
+}
+.badge {
+  font-family: "IBM Plex Mono", monospace; font-size: 10px;
+  padding: 1px 6px; border-radius: 100px; border: 1px solid var(--hair); color: var(--muted);
+}
+.badge.draft { color: var(--warn); border-color: #b4530940; background: #b453090f; }
+
+/* 编辑器 */
+.editor { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
+.md-editor {
+  font-family: "IBM Plex Mono", monospace; font-size: var(--fs-sm); line-height: 1.85;
+  min-height: 380px;
+  tab-size: 2;
+}
+.preview {
+  border: 1px dashed var(--hair); border-radius: 10px;
+  padding: var(--sp-5); background: #f2f1ef6b;
+  max-height: 460px; overflow: auto;
+}
+.preview h1, .preview h2, .preview h3 { font-family: Archivo, sans-serif; letter-spacing: -0.01em; }
+.preview h2 { font-size: 1.3rem; margin: 1.2em 0 0.5em; }
+.preview h3 { font-size: 1.08rem; margin: 1.1em 0 0.4em; }
+.preview p { line-height: 1.8; margin: 0.7em 0; }
+.preview code {
+  font-family: "IBM Plex Mono", monospace; font-size: 0.9em;
+  background: var(--code-bg); padding: 1px 5px; border-radius: 4px;
+}
+.preview pre { background: var(--code-bg); padding: var(--sp-4); border-radius: 8px; overflow: auto; }
+.preview pre code { background: none; padding: 0; }
+.preview img { max-width: 100%; border-radius: 6px; }
+.preview table { border-collapse: collapse; width: 100%; font-size: var(--fs-sm); }
+.preview th, .preview td { border: 1px solid var(--hair); padding: 6px 10px; text-align: left; }
+.preview blockquote {
+  margin: 0.8em 0; padding: 2px 0 2px var(--sp-4);
+  border-left: 3px solid var(--accent); color: var(--muted);
+}
+
+/* 标签选择 */
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip {
+  font-family: "IBM Plex Mono", monospace; font-size: 11.5px;
+  padding: 3px 10px; border-radius: 100px; cursor: pointer;
+  border: 1px solid var(--hair); background: transparent; color: var(--muted);
+  transition: all var(--dur-hover) var(--ease-interact);
+}
+.chip:hover { border-color: #2d7d4655; color: var(--accent-ink); }
+.chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* 照片墙 */
+.wall {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: var(--sp-3);
+}
+.photo {
+  position: relative; border-radius: 8px; overflow: hidden;
+  border: 1px solid var(--hair); background: #f2f1ef; aspect-ratio: 1;
+  cursor: context-menu;
+  transition: transform var(--dur-hover) var(--ease-interact),
+              box-shadow var(--dur-hover) var(--ease-interact);
+}
+.photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo:hover { transform: translateY(-2px); box-shadow: var(--glass-shadow); }
+.photo .cap {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 4px 7px; font-family: "IBM Plex Mono", monospace; font-size: 10px;
+  color: #fff; background: linear-gradient(transparent, #000000b8);
+}
+.photo .tag {
+  position: absolute; top: 5px; left: 5px;
+  font-family: "IBM Plex Mono", monospace; font-size: 9.5px;
+  padding: 1px 6px; border-radius: 100px;
+  background: #000000a6; color: #fff;
+}
+
+/* 右键菜单 */
+.menu {
+  position: fixed; z-index: 100; min-width: 208px;
+  background: var(--paper); border: 1px solid var(--hair); border-radius: 9px;
+  box-shadow: 0 12px 40px -10px #1a1a1a4d, 0 2px 6px #1a1a1a14;
+  padding: 5px; display: none;
+}
+.menu.on { display: block; animation: menuIn 120ms var(--ease-interact); }
+@keyframes menuIn { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: none; } }
+.menu button {
+  display: block; width: 100%; text-align: left;
+  font: inherit; font-size: var(--fs-sm); color: var(--ink);
+  background: transparent; border: 0; padding: 7px 10px; border-radius: 6px; cursor: pointer;
+}
+.menu button:hover { background: var(--accent-wash); }
+.menu .hr { height: 1px; background: var(--hair); margin: 4px 6px; }
+
+/* 提示条 / 日志 */
+.toast {
+  position: fixed; bottom: var(--sp-5); left: 50%; transform: translateX(-50%) translateY(10px);
+  background: var(--ink); color: var(--paper);
+  font-size: var(--fs-sm); padding: 9px 16px; border-radius: 100px;
+  opacity: 0; pointer-events: none; transition: all var(--dur-hover) var(--ease);
+  z-index: 200; max-width: 70vw;
+}
+.toast.on { opacity: 1; transform: translateX(-50%); }
+.toast.err { background: var(--danger); }
+
+.console {
+  font-family: "IBM Plex Mono", monospace; font-size: 11.5px; line-height: 1.75;
+  background: var(--dusk-1); color: #cfe3d4;
+  border-radius: 9px; padding: var(--sp-4);
+  max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-all;
+}
+.console .ok { color: #7ed99a; }
+.console .bad { color: #ff9b91; }
+
+/* 步骤条 */
+.steps { display: flex; gap: var(--sp-3); flex-wrap: wrap; }
+.step {
+  display: flex; align-items: center; gap: 7px;
+  font-size: var(--fs-sm); padding: 6px 12px;
+  border-radius: 100px; border: 1px solid var(--hair);
+}
+.step.pending { color: var(--muted); }
+.step.ok { border-color: #2d7d4655; background: var(--accent-wash); color: var(--accent-ink); }
+.step.bad { border-color: #b3261e55; background: var(--danger-wash); color: var(--danger); }
+.step .n {
+  width: 17px; height: 17px; border-radius: 50%; display: grid; place-items: center;
+  font-family: "IBM Plex Mono", monospace; font-size: 10px;
+  background: var(--hair); color: var(--ink);
+}
+.step.ok .n { background: var(--accent); color: #fff; }
+.step.bad .n { background: var(--danger); color: #fff; }
+
+/* 差异列表 */
+.diff { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; line-height: 1.9; }
+.diff .f { display: flex; gap: var(--sp-3); }
+.diff .s { width: 2ch; color: var(--muted); }
+.diff .add .s { color: var(--accent); }
+.diff .mod .s { color: var(--warn); }
+.diff .del .s { color: var(--danger); }
+
+.empty { color: var(--muted); font-size: var(--fs-sm); padding: var(--sp-6); text-align: center; }
+.hr { height: 1px; background: var(--hair); margin: var(--sp-5) 0; }
+.kbd {
+  font-family: "IBM Plex Mono", monospace; font-size: 10.5px;
+  border: 1px solid var(--hair); border-bottom-width: 2px;
+  border-radius: 5px; padding: 1px 5px; color: var(--muted);
+}
+.spin { display: inline-block; animation: spin 900ms linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 滚动条（细一点，与站上"原生滚动条被藏"的取向一致但这里要能用） */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #1a1a1a26; border-radius: 100px; border: 3px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: #1a1a1a40; background-clip: content-box; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ══════════════════ 应用内对话框 ══════════════════
+   ★ 不用 window.prompt / confirm：在 WebView2 里不保证弹得出来（也难看）。
+     自己做一套，样式跟着 token 走。 */
+.mask {
+  position: fixed; inset: 0; z-index: 300;
+  background: #0b100ed9;
+  display: none; place-items: center; padding: var(--sp-5);
+}
+.mask.on { display: grid; }
+.dialog {
+  width: min(600px, 94vw); max-height: 86vh; overflow: auto;
+  background: var(--paper); border: 1px solid var(--hair); border-radius: 12px;
+  box-shadow: 0 24px 70px -20px #000000a6;
+  padding: var(--sp-5);
+  animation: viewIn 180ms var(--ease);
+}
+.dialog h3 { margin: 0 0 var(--sp-2); font-family: Archivo, sans-serif; font-size: var(--fs-h3); }
+.dialog .desc { margin: 0 0 var(--sp-4); color: var(--muted); font-size: var(--fs-sm); line-height: 1.75; }
+.dialog .desc code { font-family: var(--f-mono); background: var(--code-bg); padding: 0 4px; border-radius: 4px; }
+.dialog .acts { display: flex; gap: var(--sp-3); justify-content: flex-end; margin-top: var(--sp-5); }
+.dialog.wide { width: min(920px, 96vw); }
+
+/* 图片行（说说配图：缩略 + alt 输入 + 删） */
+.imgrow {
+  display: flex; gap: var(--sp-3); align-items: center;
+  border: 1px solid var(--hair); border-radius: 9px; padding: 6px;
+}
+.imgrow img { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; flex: none; background: var(--code-bg); }
+.imgrow .field { flex: 1; }
+
+/* 可点缩略图（把已入库的图插到正文光标处） */
+.thumbs { display: flex; gap: 7px; flex-wrap: wrap; }
+.thumbs button {
+  border: 1px solid var(--hair); border-radius: 7px; padding: 0;
+  width: 58px; height: 58px; overflow: hidden; cursor: pointer; background: var(--code-bg);
+  transition: border-color var(--dur-hover) var(--ease-interact), transform var(--dur-fast) var(--ease-interact);
+}
+.thumbs button:hover { border-color: var(--accent); transform: translateY(-1px); }
+.thumbs img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* 浏览器回退模式：三个窗口键没有桥，就别装作能用 */
+/* 拖动窗口时：全局别选中文字、光标统一成抓握（否则从标题文字上起拖会顺手刷出一片选区） */
+body.dragging, body.dragging * { cursor: grabbing !important; user-select: none !important; }
+
+body.bare .lights .light { opacity: 0.35; cursor: default; }
+body.bare .titlebar { cursor: default; }
+body.bare .lights .light:hover { filter: none; }
+body.bare .titlebar:hover .light.l-red,
+body.bare .titlebar:hover .light.l-yellow,
+body.bare .titlebar:hover .light.l-green { background: var(--dusk-4); }
+body.bare .titlebar:hover .light svg { opacity: 0; }
+
+/* 列表里的空态与加载条 */
+.list .empty { padding: var(--sp-5); }
+.busy { opacity: 0.55; pointer-events: none; }
+
+/* 标签管理：一行 = 名字 + 用法 + 删除 */
+.tagrow {
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: 8px var(--sp-4); border-bottom: 1px solid #1a1a1a0a;
+}
+.tagrow:last-child { border-bottom: 0; }
+.tagrow .name { font-size: var(--fs-sm); min-width: 4.5em; }
+.tagrow .use {
+  font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--muted);
+  flex: 1; min-width: 0;
+}
+/* 孤儿标签（登记了却没有文章用它）—— 现在跑 npm run verify 就会红，标出来 */
+.tagrow.orphan .use { color: var(--warn); }

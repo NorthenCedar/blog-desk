@@ -1,0 +1,55 @@
+# ══════════════════════════════════════════════════════════════════════
+#  写作台 · gitignore
+#
+#  ★ 第一条是硬红线：config.json 里存着**博客线上留言管理接口的 ADMIN_TOKEN**。
+#    它不是"个人偏好"，是**真凭据** —— 拿到它就能删光全站留言。
+#    ⇒ 永远不入库。仓库里只放 config.example.json（密钥留空）。
+#    ⇒ 新克隆的人必须自己复制一份并填密钥，流程写在 README。
+config.json
+config.json.bak*
+*.bak-rotate
+
+# 无头 Chrome 的用户数据目录（CDP 探针跑出来的）。
+# 实测当前里面 0 条密码，但这是**浏览器凭据库的标准位置** ——
+# 只要有人拿自己的 profile 跑一次探针，进去的就是他的登录态。
+# 这种东西没有"现在是空的所以没关系"，一律不入库。
+_cdp_profile*/
+_cdp_profile*/
+
+# 测试夹具：它自己是个 **git 仓库**（嵌套 repo）。
+# ★ 这正是 2026-09-27 那次线上事故的同款成因：嵌套仓库进 git 会变成 gitlink，
+#   Cloudflare 克隆/构建会直接失败，线上停在上一个成功版本。
+#   ⇒ 双重防护：这里 ignore 掉，且下面单独再挡一层 `git rm --cached`。
+_fixture/
+
+# 构建产物与运行期文件
+build/
+dist/
+__pycache__/
+*.pyc
+*.pyo
+*.spec.bak
+*.egg-info/
+
+# 运行日志（起不来时的现场，含本机绝对路径）
+运行日志.txt
+_自检日志.txt
+*.log
+
+# 一次性诊断产物：截图、图标取样、UI dump。
+# 它们是**当时的证据**，不是代码 —— 证据留在本机就够了。
+_diag_*.png
+_icon_ramp.png
+_icon_t5_dusk.png
+_uidump_*.txt
+_t*.png
+
+# 探针脚本的临时用户目录（与 _cdp_profile* 同理）
+_fixture_out/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store

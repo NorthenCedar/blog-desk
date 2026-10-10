@@ -1,0 +1,10 @@
+{
+  "repo": "D:\\path\\to\\your\\blog-repo",
+  "site": "https://example.com",
+  "admin_token": "",
+  "max_kb": 300,
+  "window": {
+    "width": 1180,
+    "height": 760
+  }
+}

@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>写作台 · 北杉札记</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ══════════ 侧栏 ══════════ -->
+  <aside class="sidebar">
+    <div class="titlebar" id="titlebar">
+      <div class="lights">
+        <button class="light l-red" id="btn-close" title="关闭">
+          <svg viewBox="0 0 10 10"><path d="M2.5 2.5l5 5M7.5 2.5l-5 5" fill="none"/></svg>
+        </button>
+        <button class="light l-yellow" id="btn-min" title="最小化">
+          <svg viewBox="0 0 10 10"><line x1="2.2" y1="5" x2="7.8" y2="5"/></svg>
+        </button>
+        <button class="light l-green" id="btn-max" title="最大化 / 还原">
+          <svg viewBox="0 0 10 10"><path d="M3 7V3h4" fill="none"/><path d="M7 3l4 4" fill="none"/></svg>
+        </button>
+      </div>
+      <span class="grow"></span>
+      <span class="kbd" id="repo-hint">main</span>
+    </div>
+
+    <div class="brand">
+      <h1>写作台</h1>
+      <div class="sub" id="brand-sub">northcedar.top</div>
+    </div>
+
+    <nav class="nav" id="nav">
+      <button data-view="write"   aria-current="page"><span class="ico">✎</span>写作</button>
+      <button data-view="tags"><span class="ico">#</span>标签</button>
+      <button data-view="publish"><span class="ico">↑</span>发布</button>
+      <button data-view="log"><span class="ico">☰</span>日志</button>
+      <button data-view="talks"><span class="ico">◎</span>说说</button>
+      <button data-view="photos"><span class="ico">▤</span>相册照片</button>
+      <div class="sep"></div>
+      <button data-view="comments"><span class="ico">✉</span>留言</button>
+      <button data-view="shortcuts"><span class="ico">⌘</span>快捷入口</button>
+      <button data-view="settings"><span class="ico">⚙</span>设置</button>
+    </nav>
+
+    <div class="side-foot">
+      <div class="row"><span class="dot" id="st-dot"></span><b id="st-branch">main</b></div>
+      <div class="row" id="st-clean">—</div>
+      <div class="row" id="st-remote">—</div>
+    </div>
+  </aside>
+
+  <!-- ══════════ 工作区 ══════════ -->
+  <main class="work">
+    <div class="work-head">
+      <h2 id="view-title">写作</h2>
+      <span class="hint" id="view-hint"></span>
+    </div>
+    <div class="work-body">
+
+      <!-- ── 写作 ── -->
+      <section class="view on" data-view="write">
+        <div class="split">
+          <div>
+            <div class="row tight" style="margin-bottom:var(--sp-3)">
+              <button class="btn primary sm" id="btn-new-post">＋ 新建文章</button>
+              <button class="btn sm" id="btn-refresh-posts">重新读取</button>
+            </div>
+            <div class="list" id="post-list"></div>
+          </div>
+
+          <div class="editor" id="editor-pane">
+            <div class="empty" id="editor-empty">左边选一篇文章，或新建一篇。</div>
+
+            <div id="editor-form" style="display:none" class="stack">
+              <div class="row">
+                <label class="field grow"><span>title 标题</span>
+                  <input type="text" id="f-title" placeholder="文章标题"></label>
+                <label class="field"><span>date 首发</span>
+                  <input type="date" id="f-date"></label>
+                <label class="field"><span>draft 草稿</span>
+                  <select id="f-draft"><option value="false">否（发布）</option><option value="true">是（草稿）</option></select></label>
+              </div>
+
+              <label class="field"><span>summary 摘要（≤ 80 字，纯文本）</span>
+                <textarea id="f-summary" rows="2" maxlength="80" placeholder="列表页摘要 + meta description"></textarea></label>
+
+              <div class="row spread">
+                <div class="stack" style="gap:6px">
+                  <span style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted)">tags 标签（1–3 个，须已登记）</span>
+                  <div class="chips" id="tag-chips"></div>
+                </div>
+                <span class="hint" id="summary-count">0 / 80</span>
+              </div>
+
+              <div class="row">
+                <label class="field grow"><span>slug（URL，英文小写）</span>
+                  <input type="text" id="f-slug" placeholder="my-new-post" readonly></label>
+                <label class="field grow"><span>updated 更新于（可空）</span>
+                  <input type="date" id="f-updated"></label>
+              </div>
+
+              <div class="row" style="align-items:flex-end">
+                <label class="field grow"><span>cover 头图（相对本文目录，可空）</span>
+                  <input type="text" id="f-cover" placeholder="./cover.jpg"></label>
+                <button class="btn sm" id="btn-cover-img" title="上传一张并自动填进 cover">上传头图</button>
+              </div>
+              <label class="field"><span>coverAlt 头图说明（有 cover 必填，给读屏和不显示图时用）</span>
+                <input type="text" id="f-coveralt" placeholder="图里是什么"></label>
+
+              <div class="hr"></div>
+
+              <div class="row spread">
+                <div class="row tight">
+                  <button class="btn sm" id="btn-insert-img">＋ 插入图片</button>
+                  <button class="btn sm" id="btn-toggle-preview">预览</button>
+                  <button class="btn sm" id="btn-insert-link">插入链接</button>
+                </div>
+                <span class="hint">正文用 Markdown；图片写 <code>![](./名字.jpg)</code></span>
+              </div>
+
+              <div class="stack" style="gap:6px">
+                <span style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted)">
+                  本文目录里已有的图 —— 点一下插到光标处
+                </span>
+                <div class="thumbs" id="post-imgs"></div>
+              </div>
+
+              <textarea id="f-body" class="md-editor" placeholder="正文…"></textarea>
+              <div class="preview" id="preview" style="display:none"></div>
+
+              <div class="row spread">
+                <div class="row tight">
+                  <button class="btn primary" id="btn-save">保存 <span class="kbd">Ctrl+S</span></button>
+                  <button class="btn" id="btn-save-close">保存并去发布</button>
+                </div>
+                <button class="btn danger sm" id="btn-del-post">删除这篇文章</button>
+              </div>
+              <div class="hint" id="post-meta"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 标签 ── -->
+      <section class="view" data-view="tags">
+        <div class="card">
+          <div class="spread">
+            <div class="row">
+              <h3 style="margin:0">标签注册表</h3>
+              <span class="hint" id="tag-count"></span>
+            </div>
+            <button class="btn sm" id="btn-refresh-tags">重新读取</button>
+          </div>
+          <p class="hint" style="margin-bottom:var(--sp-4)">
+            存在 <code>src/tag-registry.ts</code> —— 站上标签的<b>唯一事实来源</b>。
+            文章的 <code>tags</code> 只能填这里登记过的，没登记构建会直接拒。
+            每篇 1–3 个；<b>每个登记标签至少要有一篇文章用它</b>，所以别提前登记空标签。
+          </p>
+
+          <div class="row" style="align-items:flex-end">
+            <label class="field grow"><span>新增标签（2–5 字，短中文词，不加层级）</span>
+              <input type="text" id="tag-new" placeholder="比如：读书" maxlength="5"></label>
+            <button class="btn primary" id="btn-add-tag" style="align-self:flex-end">＋ 登记</button>
+          </div>
+          <div class="hint" id="tag-note" style="margin-top:var(--sp-2)"></div>
+
+          <div class="list" id="tag-list" style="margin-top:var(--sp-4)"></div>
+        </div>
+      </section>
+
+      <!-- ── 发布 ── -->
+      <section class="view" data-view="publish">
+        <div class="card">
+          <div class="spread">
+            <h3>仓库状态</h3>
+            <button class="btn sm" id="btn-refresh-state">刷新</button>
+          </div>
+          <div id="pub-state" class="stack" style="gap:var(--sp-3)"></div>
+        </div>
+
+        <div class="card">
+          <h3>改动</h3>
+          <div class="diff" id="pub-diff"><div class="empty">—</div></div>
+        </div>
+
+        <div class="card">
+          <h3>一键推送</h3>
+          <p class="hint" style="margin-top:0">
+            会先跑 <code>npm run verify</code>（构建 + 测试），过了才提交、才推送。
+            推送到 main 就是在发布 —— 1–3 分钟后 Cloudflare 自动部署。
+          </p>
+          <label class="field"><span>提交信息（第一行是标题）</span>
+            <textarea id="pub-msg" rows="3" placeholder="写作台：更新内容"></textarea></label>
+          <div class="row" style="margin-top:var(--sp-4)">
+            <button class="btn primary" id="btn-push">构建 + 提交 + 推送</button>
+            <button class="btn" id="btn-commit-only">只提交，先不推</button>
+            <label class="row tight" style="font-size:var(--fs-sm);color:var(--muted)">
+              <input type="checkbox" id="pub-skip"> 跳过构建（我确定）
+            </label>
+          </div>
+          <div class="steps" id="pub-steps" style="margin-top:var(--sp-4)"></div>
+          <div class="console" id="pub-log" style="display:none;margin-top:var(--sp-4)"></div>
+        </div>
+      </section>
+
+      <!-- ── 日志 ── -->
+      <section class="view" data-view="log">
+        <div class="split">
+          <div>
+            <div class="row tight" style="margin-bottom:var(--sp-3)">
+              <button class="btn primary sm" id="btn-new-log">＋ 新版本</button>
+              <button class="btn sm" id="btn-refresh-log">重新读取</button>
+            </div>
+            <div class="list" id="log-list"></div>
+          </div>
+          <div class="stack">
+            <div class="empty" id="log-empty">左边选一条，或加一条。</div>
+            <div id="log-form" style="display:none" class="stack">
+              <div class="row">
+                <label class="field"><span>date 日期</span><input type="date" id="l-date"></label>
+                <label class="field grow"><span>version 版本号</span><input type="text" id="l-ver" placeholder="v2.11"></label>
+                <div class="row tight" style="align-self:flex-end">
+                  <button class="btn sm" id="btn-ver-auto">自动取下一个</button>
+                </div>
+              </div>
+              <div class="stack" style="gap:var(--sp-2)">
+                <span style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted)">
+                  changes 改了什么（一条一行；★ 别写「冒号+空格」，YAML 会吃）
+                </span>
+                <div id="l-changes" class="stack" style="gap:6px"></div>
+                <button class="btn sm" id="btn-add-change" style="align-self:flex-start">＋ 加一条</button>
+              </div>
+              <div class="row spread">
+                <button class="btn primary" id="btn-save-log">保存日志</button>
+                <button class="btn danger sm" id="btn-del-log">删除这条</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 说说 ── -->
+      <section class="view" data-view="talks">
+        <div class="split">
+          <div>
+            <div class="row tight" style="margin-bottom:var(--sp-3)">
+              <button class="btn primary sm" id="btn-new-talk">＋ 新说说</button>
+              <button class="btn sm" id="btn-refresh-talks">重新读取</button>
+            </div>
+            <div class="list" id="talk-list"></div>
+          </div>
+          <div class="stack">
+            <div class="empty" id="talk-empty">左边选一条，或发一条新的。</div>
+            <div id="talk-form" style="display:none" class="stack">
+              <div class="row">
+                <label class="field"><span>date 日期</span><input type="date" id="t-date"></label>
+                <label class="field grow"><span>href 链接（可空）</span>
+                  <input type="text" id="t-href" placeholder="https://…"></label>
+              </div>
+              <label class="field"><span>text 正文</span>
+                <textarea id="t-text" rows="4" placeholder="要说的话"></textarea></label>
+              <div class="stack" style="gap:var(--sp-2)">
+                <span style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted)">
+                  图片（会存进 src/assets/talks/，alt 必填）
+                </span>
+                <div id="t-imgs" class="stack" style="gap:8px"></div>
+                <div class="row tight">
+                  <button class="btn sm" id="btn-talk-img">＋ 上传图片</button>
+                  <button class="btn sm" id="btn-talk-img-from-wall">从相册挑</button>
+                </div>
+              </div>
+              <div class="row spread">
+                <button class="btn primary" id="btn-save-talk">保存说说</button>
+                <button class="btn danger sm" id="btn-del-talk">删除这条</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 相册照片 ── -->
+      <section class="view" data-view="photos">
+        <div class="card">
+          <div class="spread">
+            <div class="row">
+              <h3 style="margin:0">相册照片</h3>
+              <span class="hint" id="photo-count"></span>
+            </div>
+            <div class="row tight">
+              <select id="photo-album" style="max-width:200px"></select>
+              <button class="btn sm" id="btn-refresh-photos">重新读取</button>
+              <button class="btn sm primary" id="btn-upload-photo">＋ 上传</button>
+            </div>
+          </div>
+          <p class="hint" style="margin-bottom:var(--sp-4)">
+            右键一张照片 → 复制引用（正文用 800 缩略 / 大图 1280）/ 复制路径 / 打开原图
+          </p>
+          <div class="wall" id="photo-wall"></div>
+        </div>
+      </section>
+
+      <!-- ── 留言 ── -->
+      <section class="view" data-view="comments">
+        <div class="card">
+          <div class="spread">
+            <div class="row"><h3 style="margin:0">线上留言</h3><span class="hint" id="cm-count"></span></div>
+            <button class="btn sm" id="btn-refresh-comments">读取</button>
+          </div>
+          <p class="hint" style="margin-bottom:var(--sp-4)">
+            留言在线上 Cloudflare D1 里。删除需要「设置」里填管理密钥。
+          </p>
+          <div class="stack" id="cm-list" style="gap:var(--sp-2)"></div>
+        </div>
+      </section>
+
+      <!-- ── 快捷入口 ── -->
+      <section class="view" data-view="shortcuts">
+        <div class="card">
+          <h3>打开</h3>
+          <div class="row">
+            <button class="btn" data-open="repo">仓库目录</button>
+            <button class="btn" data-open="posts">文章目录</button>
+            <button class="btn" data-open="talks">说说图片目录</button>
+            <button class="btn" data-open="gallery">相册目录</button>
+            <button class="btn" data-open="public">静态产物目录</button>
+          </div>
+        </div>
+        <div class="card">
+          <h3>站点</h3>
+          <div class="row">
+            <a class="btn" id="lnk-site" target="_blank" rel="noopener noreferrer">打开线上站点</a>
+            <a class="btn" id="lnk-gh" target="_blank" rel="noopener noreferrer">打开 GitHub 仓库</a>
+            <a class="btn" id="lnk-cf" target="_blank" rel="noopener noreferrer">Cloudflare 面板</a>
+          </div>
+        </div>
+        <div class="card">
+          <h3>快捷键</h3>
+          <div class="stack" style="gap:6px;font-size:var(--fs-sm)">
+            <div class="row"><span class="kbd">Ctrl</span><span class="kbd">S</span><span>保存当前正在编辑的东西</span></div>
+            <div class="row"><span class="kbd">Ctrl</span><span class="kbd">Enter</span><span>保存</span></div>
+            <div class="row"><span class="kbd">Ctrl</span><span class="kbd">P</span><span>写作页：切换预览</span></div>
+            <div class="row"><span class="kbd">Esc</span><span>关掉右键菜单 / 取消编辑</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 设置 ── -->
+      <section class="view" data-view="settings">
+        <div class="card">
+          <h3>仓库与站点</h3>
+          <div class="stack">
+            <label class="field"><span>博客仓库路径</span>
+              <input type="text" id="s-repo" placeholder="D:\router\blog"></label>
+            <label class="field"><span>线上站点地址</span>
+              <input type="text" id="s-site" placeholder="https://northcedar.top"></label>
+            <label class="field"><span>图片压缩上限（KB）</span>
+              <input type="number" id="s-maxkb" min="30" max="4000" step="10"></label>
+          </div>
+          <div class="row" style="margin-top:var(--sp-4)">
+            <button class="btn primary" id="btn-save-settings">保存设置</button>
+            <span class="hint" id="settings-note"></span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>留言管理密钥</h3>
+          <p class="hint" style="margin-top:0">
+            要和站点环境变量 <code>ADMIN_TOKEN</code> 填成同一个值。存在本机的
+            <code>config.json</code> 里，只用于删留言。
+          </p>
+          <div class="row">
+            <label class="field grow"><span>ADMIN_TOKEN</span>
+              <input type="password" id="s-token" placeholder="还没填"></label>
+            <button class="btn" id="btn-save-token" style="align-self:flex-end">保存密钥</button>
+            <button class="btn ghost" id="btn-clear-token" style="align-self:flex-end">清除</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>关于</h3>
+          <div class="hint" id="about-box"></div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<!-- 右键菜单 -->
+<div class="menu" id="ctxmenu"></div>
+<div class="toast" id="toast"></div>
+<input type="file" id="file-pick" accept="image/*" multiple hidden>
+
+<script src="/app.js"></script>
+</body>
+</html>
