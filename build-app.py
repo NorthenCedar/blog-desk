@@ -45,6 +45,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -202,12 +203,19 @@ def main() -> int:
         print(f"  快捷方式：{human}  {lnk}")
 
     # ③ 旧的 .bat 与旧安装位置：能请走就请走，请不动只提示（不影响用）
-    #    那个 D 盘工作区历史上带过 Low 完整性标签（有 DENY DELETE_CHILD），
-    #    所以对那个位置的删除很可能失败 —— 失败是预期内的，只提示不报错。
-    for old in (desktop() / f"{APP_NAME}.bat", Path(r"D:\router") / APP_NAME):
+    #    ★ 这里原来写死了站主本机的旧安装位置（D 盘某工作区），公开仓库里不该有 ——
+    #    而且对别人毫无意义（他机器上没有那个目录）。改为可配置：
+    #    设 OLD_INSTALL_DIR 环境变量指向你曾经的安装位置即可顺带清理；
+    #    不给就只清桌面那个 .bat。历史上那个目录带过 Low 完整性标签
+    #    （有 DENY DELETE_CHILD），所以删除失败是预期内的，只提示不报错。
+    _old_dirs = [desktop() / f"{APP_NAME}.bat"]
+    _old_dir = os.environ.get("OLD_INSTALL_DIR", "").strip()
+    if _old_dir:
+        _old_dirs.append(Path(_old_dir) / APP_NAME)
+    for old in _old_dirs:
         if old.exists():
             print(("  旧的已移入回收站：" if recycle(old)
-                   else "  ⚠ 请不动（那个目录上有 DENY DELETE_CHILD），"
+                   else "  ⚠ 请不动（那个目录上可能有 DENY ACE），"
                         "想清掉请手动删：") + str(old))
 
     # ④ ★★ 门闩：真跑一次。不过就不许说"打好了"。
