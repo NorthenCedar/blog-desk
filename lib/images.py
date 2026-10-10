@@ -34,6 +34,24 @@ from PIL import Image, ImageSequence
 
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".bmp", ".tiff", ".tif"}
 
+# PIL 的 format 名 → 站上用的扩展名。
+# ★ 只列 Pillow **认得**的格式；认不出的（见`REAL_EXT` 之外的）不进映射。
+FORMAT_EXT = {
+    "JPEG": ".jpg",
+    "JPEG2000": ".jp2",
+    "PNG": ".png",
+    "WEBP": ".webp",
+    "GIF": ".gif",
+    "BMP": ".bmp",
+    "TIFF": ".tiff",
+    "AVIF": ".avif",
+}
+
+# 同格式的别名：落盘时统一用这个「规范扩展名」，避免 jpeg/jpg 两种写法并存。
+CANON_EXT = {".jpg": ".jpg", ".jpeg": ".jpg", ".png": ".png", ".webp": ".webp",
+             ".gif": ".gif", ".bmp": ".bmp", ".tiff": ".tiff", ".tif": ".tiff",
+             ".avif": ".avif"}
+
 # 站上对图片的要求：所有 <img> 必须有非空 alt（硬约束，测试守着）
 # ⇒ 这里只负责"把文件放对地方"，alt 由界面收集。
 
@@ -71,6 +89,60 @@ def _unique(path: Path) -> Path:
         if not cand.exists():
             return cand
         i += 1
+
+
+def sniff_format(data: bytes) -> str | None:
+    """读出图片的真实格式（PIL 的 format 名），读不出返回 None。
+
+    ★ 为什么要嗅探而不是信文件名：
+      浏览器/截图工具给的扩展名经常与真实格式不符（站主2026-10-10 那次
+      就把一张JPEG 存成了 `.png`）。`IMAGE_EXT` 那道检查查的是**名字**，
+      查不出这种不一致 —— 而 `compress_image` 里「够小就不重编码」那条
+      分支会把错误名字**原样固化**下来。
+      真格式永远以内容为准（浏览器与 Astro 都是这么判的）。
+    """
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            return (im.format or "").upper() or None
+    except Exception:  # noqa: BLE001 —— 读不出就是读不出，交给调用方报错
+        return None
+
+
+def real_ext(data: bytes) -> str | None:
+    """真实格式对应的**规范**扩展名；认不出返回 None。"""
+    fmt = sniff_format(data)
+    if not fmt:
+        return None
+    return FORMAT_EXT.get(fmt)
+
+
+def fix_ext(name: str, data: bytes) -> tuple[str, str | None]:
+    """把文件名纠正成与内容相符的扩展名。返回 (新名, 真实扩展名)。
+
+    三种情况：
+      · 名实相符 → 原样返回（绝大多数情况，什么都不做）
+      · 名实不符 → **改成真实格式的扩展名**（站主选的 A 方案：静默纠正）
+      · 认不出内容 → 原样返回（由 compress_image去报「这不是能识别的图片」）
+
+    ★ 只改扩展名，**不碰主名**（`Image_1790268606244_504` 这类原始名要保住）。
+    ★ 同格式别名归一：`.jpeg` → `.jpg`，避免目录里两种写法并存。
+    ★ 大小写也归一：`.JPG` → `.jpg`（Windows 不区分，但 git 区分）。
+    """
+    ext = real_ext(data)
+    if ext is None:
+        return name, None
+    raw = Path(name).suffix          # 原始大小写，可能不存在
+    cur = raw.lower()
+    # ★ 连大小写也要归一：`.JPG` 与 `.jpg` 内容上都对，但落盘名要统一。
+    #   Windows 文件系统不区分大小写，可git 会 —— 目录里混着 `a.JPG` 和 `a.jpg`
+    #   在跨平台时会打架。判据要判**整个后缀逐字相等**，不是判「小写后相等」。
+    if raw == ext:
+        return name, ext
+    if CANON_EXT.get(cur) == ext:
+        return (name[: -len(raw)] if raw else name) + ext, ext
+    # 名实不符：改扩展名，主名不动
+    stem = name[: -len(raw)] if raw else name
+    return (stem or "image") + ext, ext
 
 
 def compress_image(src: bytes, max_kb: int = 300, max_edge: int = 1600) -> tuple[bytes, dict]:
@@ -127,20 +199,44 @@ def compress_image(src: bytes, max_kb: int = 300, max_edge: int = 1600) -> tuple
     return best, report
 
 
+def _save_image(d: Path, filename: str, data: bytes, max_kb: int,
+                compress: bool, max_edge: int = 1600) -> tuple[Path, dict]:
+    """三个 save_for_* 共用的落盘内核。返回 (落盘路径, 压缩报告)。
+
+    ★ 为什么纠正是**两次**而不是一次：
+      第一次在压缩前（拿原始字节判格式），压缩后再校一次。
+      实测 `compress_image` 现在的实现**总是保持格式**（有透明通道⇒存 PNG，
+      无透明通道⇒存 JPEG），所以第二次在当前实现下通常是恒等的 ——
+      变异验证里有一类变异（把第一次纠正改成任意错值）就因为第二次兜住了而
+      等价通过。
+      但这层冗余是**故意留的**：`compress_image` 哪天改成「统一转 JPEG」
+      或加了新分支，第二次就是唯一的救命处，而代价只是两次 `Image.open`。
+      ⇒ 别为了「看起来是冗余」把它删了。
+    """
+    name = _safe_name(filename)
+    if Path(name).suffix.lower() not in IMAGE_EXT:
+        raise ImageError(f"不支持的图片格式：{Path(name).suffix}")
+    report = {}
+    # A 方案（站主 2026-10-10 定）：名实不符时**静默纠正成真实格式**。
+    name, ext = fix_ext(name, data)
+    if compress:
+        data, report = compress_image(data, max_kb, max_edge=max_edge)
+    name, ext2 = fix_ext(name, data)
+    if ext2 and ext2 != ext:
+        report["renamed_to"] = name
+    target = _unique(d / name)
+    target.write_bytes(data)
+    report.setdefault("stored_as", target.suffix.lower())
+    return target, report
+
+
 def save_for_post(content, slug: str, filename: str, data: bytes,
                   max_kb: int = 300, compress: bool = True) -> dict:
     """存进 content/posts/<slug>/。"""
     d = content.posts_dir / slug
     if not d.is_dir():
         raise ImageError(f"文章目录不存在：content/posts/{slug}")
-    name = _safe_name(filename)
-    if Path(name).suffix.lower() not in IMAGE_EXT:
-        raise ImageError(f"不支持的图片格式：{Path(name).suffix}")
-    report = {}
-    if compress:
-        data, report = compress_image(data, max_kb)
-    target = _unique(d / name)
-    target.write_bytes(data)
+    target, report = _save_image(d, filename, data, max_kb, compress)
     return {"ok": True, "name": target.name, "dir": "post", "path": str(target),
             "report": report, "rel": f"./{target.name}"}
 
@@ -150,14 +246,7 @@ def save_for_talk(content, filename: str, data: bytes,
     """存进 src/assets/talks/（说说图唯一允许的位置）。"""
     d = content.talks_assets
     d.mkdir(parents=True, exist_ok=True)
-    name = _safe_name(filename)
-    if Path(name).suffix.lower() not in IMAGE_EXT:
-        raise ImageError(f"不支持的图片格式：{Path(name).suffix}")
-    report = {}
-    if compress:
-        data, report = compress_image(data, max_kb)
-    target = _unique(d / name)
-    target.write_bytes(data)
+    target, report = _save_image(d, filename, data, max_kb, compress)
     return {"ok": True, "name": target.name, "dir": "talks", "path": str(target),
             "report": report, "rel": target.name}
 
@@ -168,14 +257,7 @@ def save_for_gallery(content, album: str, filename: str, data: bytes,
     d = content.gallery_dir / album
     if not d.is_dir():
         raise ImageError(f"相册不存在：content/gallery/{album}")
-    name = _safe_name(filename)
-    if Path(name).suffix.lower() not in IMAGE_EXT:
-        raise ImageError(f"不支持的图片格式：{Path(name).suffix}")
-    report = {}
-    if compress:
-        data, report = compress_image(data, max_kb, max_edge=2560)
-    target = _unique(d / name)
-    target.write_bytes(data)
+    target, report = _save_image(d, filename, data, max_kb, compress, max_edge=2560)
     return {"ok": True, "name": target.name, "dir": "gallery", "path": str(target),
             "report": report, "rel": f"./{target.name}"}
 
