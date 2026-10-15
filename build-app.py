@@ -46,6 +46,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -58,6 +59,18 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from lib import proc  # noqa: E402
+
+# ★★ 2026-10-15：把 stdout 兜成"编不出来的字符不抛异常"。
+#   起因：本脚本第 224 行那句 `print(("  ✔ 自检通过：" if ok else "  ✘ 自检没过：") + why)`
+#   在 **GBK 控制台**上打印 `✔`/`✘` 会直接 `UnicodeEncodeError`
+#   ⇒ **自检失败时，屏幕上是一屏 traceback，而不是"自检没通过 + 原因"**。
+#   本轮就被它误导过一回（以为自检本身炸了）。
+#   `errors="replace"` 只是兜底；关键输出另用 ASCII 记号（见 say()），保证任何编码都读得懂。
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(errors="replace")          # Python 3.7+
+    except (AttributeError, ValueError):
+        pass
 from make_shortcut import (APP_NAME, EXE, create_lnk, desktop, force_medium,  # noqa: E402
                            integrity_label, recycle, start_menu)
 from make_readme import generate as gen_readme  # noqa: E402
@@ -121,7 +134,101 @@ def reclaim(*paths: Path) -> None:
             print(f"  已把临时目录收回回收站：{p}")
 
 
+def say(msg: str = "") -> None:
+    """打印一行。**关键输出一律用它**，因为它的记号是纯 ASCII。
+
+    为什么不用 `✔` / `✘`：默认控制台编码是 GBK，编不出这两个字符 ⇒ 抛
+    UnicodeEncodeError ⇒ 恰恰在"构建失败"这种最需要看到信息的时候，把信息本身炸没了。
+    """
+    print(msg)
+
+
+# ★ 成功 / 失败 / 提醒 —— 纯 ASCII，任何编码都打得出来
+OK, BAD, WARN = "OK", "!!", "warn"
+
+
+def build_deps(root: Path | None = None) -> list[str]:
+    """**从源码里扫**出运行期必须能 import 的第三方顶层模块。
+
+    ★★ 为什么扫源码而不是手写一张清单（2026-10-15）：
+       换了一套 Python 重打包，`Pillow` 与 `PyYAML` 都没装 —— 而 `lib/images.py`
+       顶层 `from PIL import Image`、`lib/content.py` 顶层 `import yaml`。
+       PyInstaller 照样**构建成功**，只是产出一个双击就崩的 exe。
+       手写清单必然滞后（这次 README 就只列了 `pywebview` 与 `pythonnet`）；
+       扫源码则下一个新依赖也会被自动抓到。
+
+    扫描范围：`app.py` / `server.py` / `lib/*.py` 的**顶层** import。
+    排除：标准库（`sys.stdlib_module_names`）、自家包（`lib`）、`__future__`。
+    只取顶层名（`PIL.Image` → `PIL`）。
+    """
+    root = root or HERE
+    files = [root / "app.py", root / "server.py"]
+    files += sorted((root / "lib").glob("*.py")) if (root / "lib").is_dir() else []
+
+    found: set[str] = set()
+    for f in files:
+        if not f.is_file():
+            continue
+        for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+            m = re.match(r"\s*(?:import\s+([A-Za-z_][\w.]*)|from\s+([A-Za-z_][\w.]*)\s+import\b)",
+                         line)
+            if not m:
+                continue
+            top = (m.group(1) or m.group(2)).split(".")[0]
+            if top in ("__future__", "lib") or top in sys.stdlib_module_names:
+                continue
+            # ★ 自家模块也要排除：`app.py` 里有 `import server`，而 server.py 就在根目录 ——
+            #   只排除 `lib` 会把 `server` 当成第三方依赖（第一版就漏在这里）。
+            if (root / f"{top}.py").is_file() or (root / top).is_dir():
+                continue
+            found.add(top)
+    return sorted(found)
+
+
+def check_build_deps(root: Path | None = None) -> list[str]:
+    """返回**当前这套构建环境里 import 不了**的那些依赖（空 = 全齐）。
+
+    ★ `importlib.util.find_spec` 只查"能不能找到"，不真 import ——
+       `find_spec` 对一个**空壳目录**（例如上一版安装留下的 `_internal/PIL`）
+       也可能"找到"，而真 import 会报 `cannot import name 'Image' (unknown location)`。
+       所以这里**真的 import 一次**：那才是"双击会不会崩"的判据。
+    """
+    import importlib
+
+    missing: list[str] = []
+    for name in build_deps(root):
+        try:
+            importlib.import_module(name)
+        except Exception:                                  # noqa: BLE001
+            missing.append(name)
+    return missing
+
+
+def preflight() -> bool:
+    """**构建前的硬门闩**：依赖齐全返回 True，不齐就打印清单并返回 False。
+
+    ★ 单独抽成函数而不是写在 main() 里：这样它能被单独测。
+      第一版把它 inline 在 main() 开头，于是"把 `if missing:` 改掉"这种变异
+      根本没测试会红 —— 门闩摆在那儿，却没人走过那条路。
+    """
+    deps = build_deps()
+    missing = check_build_deps()
+    if missing:
+        say(f"  {BAD} 构建依赖不全，**先停下**（否则会打出一个双击就崩的 exe）：")
+        for m in missing:
+            say(f"      缺 {m}")
+        say(f"  装上（README 的清单曾经漏了 Pillow 与 PyYAML，2026-10-15 实测）：")
+        say(f"      {Path(sys.executable)} -m pip install " + " ".join(deps))
+        say(f"  {WARN} 还要注意：构建用的 venv **不要建在 D:\\router 里** —— 那棵树挂着")
+        say(f"     低完整性标签，venv 里的 python 会继承，写不进 %LOCALAPPDATA%\\Programs\\。")
+        return False
+    say(f"  {OK} 构建依赖齐全（{len(deps)} 个：{', '.join(deps)}）")
+    return True
+
+
 def main() -> int:
+    if not preflight():
+        return 1
     # 老版本留下的固定目录：顺手请走，免得一直占着（请不动也不影响构建）
     reclaim(HERE / "dist" / APP_NAME, HERE / "build" / APP_NAME)
 
@@ -140,7 +247,7 @@ def main() -> int:
     #   不许悄悄退回默认图标（那只会让站主看到一个"莫名其妙"的应用图标）。
     ico = HERE / "writedesk.ico"
     if not ico.is_file():
-        print(f"✘ 没有 {ico} —— 先在源码目录跑一次：python _icon.py")
+        say(f"{BAD} 没有 {ico} —— 先在源码目录跑一次：python _icon.py")
         print("  （图标是交付物的一部分，缺了不该悄悄用默认图标顶上）")
         return 1
 
@@ -159,12 +266,12 @@ def main() -> int:
         "app.py",
     ])
     if rc != 0:
-        print(f"✘ PyInstaller 失败（退出码 {rc}）")
+        say(f"{BAD} PyInstaller 失败（退出码 {rc}）")
         return rc
 
     built = distpath / APP_NAME
     if not (built / f"{APP_NAME}.exe").is_file():
-        print(f"✘ 没找到 {built / (APP_NAME + '.exe')}")
+        say(f"{BAD} 没找到 {built / (APP_NAME + '.exe')}")
         return 1
 
     DEST.mkdir(parents=True, exist_ok=True)
@@ -178,20 +285,20 @@ def main() -> int:
             shutil.copy2(src, DEST / extra)
             print(f"  带上 {extra}")
         else:
-            print("  ⚠ 没有 config.json（第一次装？）—— 启动后在「设置」里填一次就行")
+            say("  warn 没有 config.json（第一次装？）—— 启动后在「设置」里填一次就行")
 
     # 说明书：从 UTF-8 源现转成 GBK + CRLF（**不要**直接拷，否则源改了这里不会变）
     try:
         for note in gen_readme():
             print("  " + note)
     except Exception as e:                                    # noqa: BLE001
-        print(f"  ⚠ 说明书没生成：{e}")
+        say(f"  warn 说明书没生成：{e}")
 
     # ① 完整性标签归位（正常情况这里没事 —— 新装的目录本来继承的就是 Medium，
     #    这一步是防"目标目录哪天又被打了 Low 标签"的兜底）
     for note in filter(None, (force_medium(DEST, recursive=True),
                               force_medium(EXE))):
-        print(f"  ⚠ 完整性标签不正，已改回 Medium：{note}")
+        say(f"  warn 完整性标签不正，已改回 Medium：{note}")
     label = integrity_label(EXE)
     print(f"  安装位置：{DEST}")
     print(f"  exe 完整性标签：{label}")
@@ -214,24 +321,24 @@ def main() -> int:
         _old_dirs.append(Path(_old_dir) / APP_NAME)
     for old in _old_dirs:
         if old.exists():
-            print(("  旧的已移入回收站：" if recycle(old)
+            say(("  旧的已移入回收站：" if recycle(old)
                    else "  ⚠ 请不动（那个目录上可能有 DENY ACE），"
                         "想清掉请手动删：") + str(old))
 
     # ④ ★★ 门闩：真跑一次。不过就不许说"打好了"。
     print("  自检中（起服务 → /api/health）…")
     ok, why = smoke_test(EXE)
-    print(("  ✔ 自检通过：" if ok else "  ✘ 自检没过：") + why)
+    say(f"  {OK if ok else BAD} " + ("自检通过：" if ok else "自检没过：") + why)
 
     reclaim(distpath, workpath)
 
     size = sum(f.stat().st_size for f in DEST.rglob("*") if f.is_file())
-    print()
+    say()
     if not ok:
-        print(f"✘ exe 打出来了但**起不来**，别用：{EXE}")
-        print(f"  现场留在 {DEST / '_自检日志.txt'}；对照 说明.txt 里的「出问题时的自查顺序」。")
+        say(f"{BAD} exe 打出来了但**起不来**，别用：{EXE}")
+        say(f"  现场留在 {DEST / '_自检日志.txt'}；对照 说明.txt 里的「出问题时的自查顺序」。")
         return 1
-    print(f"✔ 打好了并且自检跑通：{EXE}")
+    say(f"{OK} 打好了并且自检跑通：{EXE}")
     print(f"  应用目录 {size / 1024 / 1024:.0f} MB（{DEST}）")
     print("  双击桌面上的「写作台」就能开 —— 没有脚本，没有命令行窗口。")
     return 0

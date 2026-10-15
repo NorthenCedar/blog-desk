@@ -38,7 +38,19 @@ cd blog-desk
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt      # 如果仓库里没有，用下面这行
-pip install pywebview pythonnet
+pip install pywebview pythonnet Pillow PyYAML
+
+# ★★ venv **不要建在本仓库里**（2026-10-15 实测，见 build-app.py 的 preflight）：
+#   本仓库所在的 D:\ 整棵树挂着 `Mandatory Label\Low Mandatory Level` 低完整性标签，
+#   在这里建的 .venv 会**继承**这个标签 ⇒ 低完整性进程写不进
+#   %LOCALAPPDATA%\Programs\，装到一半 Permission denied。
+#   ⇒ 建在工作区外面，例如：
+#   python -m venv "$env:LOCALAPPDATA\Programs\写作台-build-venv"
+#
+# ★★ `Pillow` 与 `PyYAML` 别漏（2026-10-15 实测）：`lib/images.py` 顶层
+#   `from PIL import Image`、`lib/content.py` 顶层 `import yaml`，缺了照样能"构建成功"，
+#   只是产出一个双击就崩的 exe。现在 `build-app.py` 会在跑 PyInstaller **之前**
+#   从源码里扫出依赖并逐个 import，缺了就直接停下 —— 但第一次装还是按上面那行装全。
 
 # 复制配置模板
 copy config.example.json config.json
