@@ -37,6 +37,7 @@
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -56,9 +57,26 @@ def chk(name: str, ok: bool, detail: str = ""):
     print(("  ✔ " if ok else "  ✗ ") + name + (f"　{detail}" if detail else ""))
 
 
-def run(args, cwd):
+def run(args, cwd, env=None):
+    e = os.environ.copy()
+    if env:
+        e.update(env)
     return subprocess.run(args, cwd=str(cwd), capture_output=True, text=True,
-                          encoding="utf-8", errors="replace")
+                          encoding="utf-8", errors="replace", env=e)
+
+
+def pinned(offset_seconds: int) -> dict[str, str]:
+    """把提交时间**钉死**，让"两个内容相同、提交不同的兄弟"这件事不再看运气。
+
+    ★ 为什么非钉不可（实测踩出来的）：git 提交对象里带作者/提交者时间戳，
+      精度只有**秒**。第①节那两个兄弟提交作者、邮箱、消息、内容、父提交
+      **全都一样**，唯一的差别就是时间戳 ——
+      两次提交一旦落在同一秒，SHA 就**完全相同**，"兄弟"变成了"同一个"，
+      下面那条前提直接红。实测约每 10 次里飘中 1 次。
+      正解是把时间钉死，不是"跑慢一点碰运气"。
+    """
+    return {"GIT_AUTHOR_DATE": f"2026-01-01T00:00:0{offset_seconds}+00:00",
+            "GIT_COMMITTER_DATE": f"2026-01-01T00:00:0{offset_seconds}+00:00"}
 
 
 def mkrepo(base: Path, name: str) -> Path:
@@ -105,7 +123,7 @@ with tempfile.TemporaryDirectory() as td:
     before_head = head(w)
     (w / "a.md").write_text("二\n", encoding="utf-8")
     run(["git", "add", "-A"], w)
-    run(["git", "commit", "-m", "写作台：内容更新，写说说"], w)
+    run(["git", "commit", "-m", "写作台：内容更新，写说说"], w, env=pinned(0))
     local_commit = head(w)
     snap = snapshot(w)
 
@@ -116,7 +134,8 @@ with tempfile.TemporaryDirectory() as td:
     run(["git", "config", "user.name", "t"], other)
     (other / "a.md").write_text("二\n", encoding="utf-8")
     run(["git", "add", "-A"], other)
-    run(["git", "commit", "-m", "写作台：内容更新，写说说"], other)
+    # ★ 时间钉在第 1 秒（本地那个钉在第 0 秒）⇒ 两个 SHA 必然不同，与跑多快无关
+    run(["git", "commit", "-m", "写作台：内容更新，写说说"], other, env=pinned(1))
     remote_commit = head(other)
     run(["git", "push", "origin", "main"], other)
     chk("前提：本地与远端已经是兄弟（内容相同、提交不同）",

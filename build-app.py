@@ -84,6 +84,17 @@ def run(args: list[str]) -> int:
     return proc.run(args, cwd=str(HERE)).returncode
 
 
+def _log_path(exe: Path, log_dir: Path | None = None) -> Path:
+    """自检日志放哪。默认**放在被测 exe 旁边**。
+
+    ★ 原来这里写死 `DEST`，那在旧流程里正好等于 exe 所在目录，没毛病。
+      改成"装到新目录"之后自检跑的是 `写作台-新/写作台.exe`，
+      日志却落在**旧安装**里 —— 于是失败提示指向 staged，现场却不在那儿。
+      （"提示指一处、现场在另一处"这种错最难查：看哪边都是合理的。）
+    """
+    return (log_dir or exe.parent) / "_自检日志.txt"
+
+
 def smoke_test(exe: Path, port: int = PROBE_PORT, timeout: float = 90.0):
     """装上之后**真跑一次**：起服务 → 打 `/api/health` → 收工。返回 (是否通过, 说明)。
 
@@ -94,7 +105,7 @@ def smoke_test(exe: Path, port: int = PROBE_PORT, timeout: float = 90.0):
     这是唯一能拿 curl / urllib 验「服务、界面、配置都对」的入口。
     （UI 自己那层还要靠站主双击目检；本机 pywebview 起窗会静默挂死，测不了。）
     """
-    log = DEST / "_自检日志.txt"
+    log = _log_path(exe)
     with open(log, "wb") as out:
         p = subprocess.Popen(
             [str(exe), "--no-open", "--port", str(port)],
@@ -204,6 +215,67 @@ def check_build_deps(root: Path | None = None) -> list[str]:
     return missing
 
 
+def _rename(a: Path, b: Path) -> None:
+    """目录改名。单独抽出来是为了能被测试替换掉（回退那一步要模拟失败）。"""
+    a.rename(b)
+
+
+def stage_install(built: Path, staged: Path, carry_from: Path | None = None,
+                  source: Path | None = None) -> list[str]:
+    """把构建产物装进一个**全新**目录。返回给人看的几行。
+
+    ★★ 为什么不再直接 copytree 到安装目录（2026-10-15 改）：
+       `copytree(dirs_exist_ok=True)` 只覆盖不删除 ⇒ 安装目录变成「**新构建 ∪ 旧残留**」。
+       实测：残留 54 个文件 / **52.75 MB**，占安装目录（91 MB）的一半以上，其中包含
+       **cp313** 的 numpy 二进制（当前构建是 cp314）—— 永远加载不了，纯死重；
+       另有 5 个 **0 字节**空壳文件，其中 `_internal/PIL` 冒充成"装好了"，
+       把「没装 Pillow」这件事遮住直到双击才报 `unknown location`（本轮真踩了）。
+       ⇒ 新建目录装 = 安装目录与构建产物**逐文件一一对应**，遮蔽没有生长的余地。
+
+    ★ 站主的设置不能丢：`config.json` 与 `运行日志.txt` 从**旧安装**带过来
+      （新建目录天然没有它们）。源码里有 `config.json` 时以源码为准。
+    """
+    notes: list[str] = []
+    staged.parent.mkdir(parents=True, exist_ok=True)
+    if staged.exists():                       # 上一轮失败的残留
+        recycle(staged)
+    shutil.copytree(built, staged)            # ★ 不用 dirs_exist_ok：目标是全新的
+    notes.append(f"  装进全新目录（零残留）：{staged}")
+
+    src_root = source or HERE
+    for extra in ("config.json", "运行日志.txt"):
+        if (staged / extra).exists():
+            continue
+        src = src_root / extra
+        if not src.is_file() and carry_from:
+            src = carry_from / extra           # ★ 旧安装里的那份（站主的设置）
+        if src.is_file():
+            shutil.copy2(src, staged / extra)
+            notes.append(f"  带上 {extra}（来自 {src.parent}）")
+    return notes
+
+
+def swap_install(staged: Path, dest: Path) -> Path | None:
+    """把已自检通过的 `staged` 换到 `dest` 上。返回**旧目录**（改名后，可回退）。
+
+    ★ 用**目录改名**而不是删除：改名是秒级、可回退的；真正的清理由调用方走回收站。
+    ★ 回退：第二步（staged → dest）失败就把 `dest-旧` 改回 `dest` ——
+      **绝不能把站主留在"没有应用"的状态**（这正是升级中途失败最糟的那种结局）。
+    """
+    old = dest.with_name(dest.name + "-旧")
+    if old.exists():                           # 上一轮没清干净的
+        recycle(old)
+    if dest.exists():
+        _rename(dest, old)
+    try:
+        _rename(staged, dest)
+    except Exception:
+        if old.exists() and not dest.exists():
+            _rename(old, dest)                 # ★ 回退
+        raise
+    return old if old.exists() else None
+
+
 def preflight() -> bool:
     """**构建前的硬门闩**：依赖齐全返回 True，不齐就打印清单并返回 False。
 
@@ -274,42 +346,72 @@ def main() -> int:
         say(f"{BAD} 没找到 {built / (APP_NAME + '.exe')}")
         return 1
 
-    DEST.mkdir(parents=True, exist_ok=True)
-    # dirs_exist_ok：只覆盖、不删除。升级时宁可留几个没用的旧文件，
-    # 也不要在站主的盘上做递归删除 —— 这类操作出过一次事就够了。
-    shutil.copytree(built, DEST, dirs_exist_ok=True)
-
-    for extra in ("config.json",):
-        src = HERE / extra
-        if src.is_file():
-            shutil.copy2(src, DEST / extra)
-            print(f"  带上 {extra}")
-        else:
-            say("  warn 没有 config.json（第一次装？）—— 启动后在「设置」里填一次就行")
+    # ── 装进**全新**目录，不碰现有安装（2026-10-15 改，见 stage_install 的注释）──
+    staged = DEST.with_name(DEST.name + "-新")
+    for note in stage_install(built, staged, carry_from=DEST, source=HERE):
+        say(note)
+    staged_exe = staged / f"{APP_NAME}.exe"
 
     # 说明书：从 UTF-8 源现转成 GBK + CRLF（**不要**直接拷，否则源改了这里不会变）
+    # ⚠ `gen_readme()` 的 TARGETS 里写死了 APPDIR（= 现有安装目录），所以这里
+    #   **临时**把第二个目标指到 staged —— 否则说明书会写进**旧**安装里，
+    #   切换完就没了。
+    import make_readme
+    _saved_targets = make_readme.TARGETS
     try:
+        make_readme.TARGETS = (HERE / "说明.txt", staged / "说明.txt")
         for note in gen_readme():
-            print("  " + note)
+            say("  " + note)
     except Exception as e:                                    # noqa: BLE001
         say(f"  warn 说明书没生成：{e}")
+    finally:
+        make_readme.TARGETS = _saved_targets
 
-    # ① 完整性标签归位（正常情况这里没事 —— 新装的目录本来继承的就是 Medium，
-    #    这一步是防"目标目录哪天又被打了 Low 标签"的兜底）
+    # ① ★★ 门闩：对**新目录**真跑一次。不过就一步都不动现有安装。
+    #   （自检日志落在 staged 旁边，见 `_log_path` 的注释）
+    say("  自检中（起服务 → /api/health）…")
+    ok, why = smoke_test(staged_exe)
+    say(f"  {OK if ok else BAD} " + ("自检通过：" if ok else "自检没过：") + why)
+    if not ok:
+        say(f"{BAD} 新版本没跑起来 —— **现有安装原封不动**，这个新目录收回回收站：{staged}")
+        # ★ 提示指的地方必须真的有现场：`reclaim(staged)` 会把日志一起带走，
+        #   所以先把它抄到**用户已经在看的那个目录**（= 现有安装），
+        #   否则上面那句"对照自查顺序"就指了个空地方。
+        _log = staged / "_自检日志.txt"
+        if _log.is_file():
+            shutil.copy2(_log, DEST / "_自检日志.txt")
+            say(f"  现场已存到 {DEST / '_自检日志.txt'}（对照 说明.txt 里的「出问题时的自查顺序」）。")
+        reclaim(staged)
+        return 1
+
+    # ② 切换：改名，秒级可回退。旧目录最后才回收。
+    try:
+        old_dir = swap_install(staged, DEST)
+    except Exception as e:                                    # noqa: BLE001
+        say(f"{BAD} 切换失败，已自动回退，现有安装没动：{e}")
+        reclaim(staged)
+        return 1
+
+    # ③ 完整性标签归位（新目录继承的可能是 Low —— 目录整棵带标签）
     for note in filter(None, (force_medium(DEST, recursive=True),
                               force_medium(EXE))):
         say(f"  warn 完整性标签不正，已改回 Medium：{note}")
     label = integrity_label(EXE)
-    print(f"  安装位置：{DEST}")
-    print(f"  exe 完整性标签：{label}")
+    say(f"  安装位置：{DEST}")
+    say(f"  exe 完整性标签：{label}")
 
-    # ② 快捷方式（桌面 + 开始菜单）
+    # ④ 旧的进回收站（★ 排在自检与切换**之后**；请不动只提示）
+    if old_dir:
+        say(("  旧版本已移入回收站：" if recycle(old_dir)
+            else f"  warn 旧版本请不动（那个目录上可能有 DENY ACE），想清掉请手动删：{old_dir}"))
+
+    # ⑤ 快捷方式（桌面 + 开始菜单）
     for human, lnk in (("桌面", desktop() / f"{APP_NAME}.lnk"),
                        ("开始菜单", start_menu() / f"{APP_NAME}.lnk")):
         create_lnk(EXE, lnk, DEST, f"{APP_NAME} · 北杉札记")
         print(f"  快捷方式：{human}  {lnk}")
 
-    # ③ 旧的 .bat 与旧安装位置：能请走就请走，请不动只提示（不影响用）
+    # ⑥ 旧的 .bat 与旧安装位置：能请走就请走，请不动只提示（不影响用）
     #    ★ 这里原来写死了站主本机的旧安装位置（D 盘某工作区），公开仓库里不该有 ——
     #    而且对别人毫无意义（他机器上没有那个目录）。改为可配置：
     #    设 OLD_INSTALL_DIR 环境变量指向你曾经的安装位置即可顺带清理；
@@ -322,22 +424,13 @@ def main() -> int:
     for old in _old_dirs:
         if old.exists():
             say(("  旧的已移入回收站：" if recycle(old)
-                   else "  ⚠ 请不动（那个目录上可能有 DENY ACE），"
+                   else "  warn 请不动（那个目录上可能有 DENY ACE），"
                         "想清掉请手动删：") + str(old))
-
-    # ④ ★★ 门闩：真跑一次。不过就不许说"打好了"。
-    print("  自检中（起服务 → /api/health）…")
-    ok, why = smoke_test(EXE)
-    say(f"  {OK if ok else BAD} " + ("自检通过：" if ok else "自检没过：") + why)
 
     reclaim(distpath, workpath)
 
     size = sum(f.stat().st_size for f in DEST.rglob("*") if f.is_file())
     say()
-    if not ok:
-        say(f"{BAD} exe 打出来了但**起不来**，别用：{EXE}")
-        say(f"  现场留在 {DEST / '_自检日志.txt'}；对照 说明.txt 里的「出问题时的自查顺序」。")
-        return 1
     say(f"{OK} 打好了并且自检跑通：{EXE}")
     print(f"  应用目录 {size / 1024 / 1024:.0f} MB（{DEST}）")
     print("  双击桌面上的「写作台」就能开 —— 没有脚本，没有命令行窗口。")
