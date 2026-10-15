@@ -166,7 +166,7 @@ def compare(repo: Path, token: str | None = None) -> dict:
     rem = remote_main(tok)
     head = git(repo, "rev-parse", "HEAD")
     head_tree = git(repo, "rev-parse", "HEAD^{tree}")
-    dirty = [l for l in git(repo, "status", "--porcelain", check=False).split("\n") if l.strip()]
+    dirty = _status_lines(repo)
 
     out = {
         "remote_sha": rem["sha"], "remote_tree": rem["tree"],
@@ -200,7 +200,7 @@ def status(repo: Path) -> dict:
     branch = git(repo, "rev-parse", "--abbrev-ref", "HEAD", check=False)
     head = git(repo, "rev-parse", "HEAD", check=False)
     subject = git(repo, "log", "-1", "--pretty=%s", check=False)
-    dirty_raw = git(repo, "status", "--porcelain", check=False)
+    dirty_raw = "\n".join(_status_lines(repo))
     dirty = [l for l in dirty_raw.split("\n") if l.strip()]
 
     out = {
@@ -233,7 +233,7 @@ def status(repo: Path) -> dict:
 
 def changed_files(repo: Path) -> list[str]:
     """工作区改动（含未跟踪）。"""
-    raw = git(repo, "status", "--porcelain", check=False)
+    raw = "\n".join(_status_lines(repo))
     files = []
     for line in raw.split("\n"):
         if len(line) > 3:
@@ -241,10 +241,108 @@ def changed_files(repo: Path) -> list[str]:
     return files
 
 
+def _status_lines(repo: Path) -> list[str]:
+    """`git status --porcelain` 的**唯一出口**：非空行列表。
+
+    ★★ 2026-10-15：每次调用都带 `-c core.quotePath=false`。
+       git 默认把非 ASCII 路径**转义成八进制**，于是站主写的中文文件名在
+       "改了哪些文件"那个列表里显示成 `?? "\351\243\216\346\231\257.md"` ——
+       一串谁也认不出的东西。
+       ⚠ 用 `-c`（单次生效）而**不是** `git config core.quotePath false`：
+          后者会在**站主的仓库**里留设置，本产品不该替用户改他的仓库配置。
+       ⚠ 这里是**唯一出口**，别再散着写 `git(repo, "status", "--porcelain")` ——
+          散着写就一定会漏掉某几处，而漏掉的那几处照样转义。
+    """
+    raw = git(repo, "-c", "core.quotePath=false", "status", "--porcelain", check=False)
+    return [l for l in raw.split("\n") if l.strip()]
+
+
+def _pull_rebase(repo: Path, on_log=None) -> dict:
+    """提交前先 `git pull --rebase origin main`：远端比你本地新时，别造分叉的兄弟提交。
+
+    ★ 只做**读**+重放本地提交，不碰远端。
+    ⚠ 拉不下来（冲突 / 没网 / 没有远端对象）⇒ **直接报错、不提交**：
+      在一个已经分叉的仓库上再提交，只会让分叉更深。宁可让站主看见报错。
+    """
+    log = on_log or (lambda *_: None)
+    head0 = git(repo, "rev-parse", "HEAD", check=False)
+    p = _run(["git", "pull", "--rebase", "origin", "main"], repo)
+    if p.returncode != 0:
+        raise GitError(
+            "提交前拉取远端失败，已停下、没有提交 —— "
+            "在已经分叉的仓库上再提交只会让分叉更深。"
+            f"请先处理这个再提交：{(p.stderr or p.stdout).strip()[:300]}"
+        )
+    head1 = git(repo, "rev-parse", "HEAD", check=False)
+    if head0 != head1:
+        log(f"已把本地提交重放到远端 main 之上（{head0[:8]} → {head1[:8]}）")
+    return {"ok": True, "head": head1, "was": head0}
+
+
+def _sync_with_remote(repo: Path, remote_sha: str, on_log=None) -> dict:
+    """API 推成功之后，把本地 HEAD 对齐到远端那个提交。返回 {ok, gate, head, why, ...}。
+
+    ★★ 为什么必须有这一步（2026-10-15 站主报「推成功了，终端却推不上去」）：
+      本通道用 GitHub API 建提交（blob → tree → commit → PATCH ref），而那个提交的
+      **父是"远端当时的 main"**，不是本地刚提交的那个 ⇒ 两边是**兄弟**不是父子：
+
+          本地：dfd65b4 ── f289173        远端：dfd65b4 ── af4158a
+
+      于是终端 `git push` 报 *Updates were rejected because the remote contains
+      work that you do not have locally*。内容其实一模一样，只是提交身份不同。
+
+    ⚠ `push()` 的 docstring 里那句「`git fetch` 在本机连不通」**已过期**：后来配了
+      `http.sslBackend=openssl` + 自带 CA 包，fetch 现在是通的，`git cat-file -e <sha>`
+      读回来是 `commit` ⇒ "对齐本地"这件事现在做得了。
+
+    ★★★ **三道闸，一道都不能少** —— 这个函数的前身栽过：
+      早先版本直接写 `git reset --soft origin/main`。fetch 静默失败时 `origin/main`
+      停在**陈旧引用**上，那一句会把 HEAD **退回旧提交**（工作区内容不变，但历史被改写）。
+      ⇒ ① fetch 退出码必须 0
+        ② 远端那个对象必须**真的在本地**（`cat-file -e`）
+        ③ 两边内容树必须相等（不等 ⇒ 本次推的内容与本地不是一回事）
+      **任一条不过 ⇒ 原地停下、一个字节都不改**，只把原因报给用户。
+    """
+    log = on_log or (lambda *_: None)
+    head0 = git(repo, "rev-parse", "HEAD", check=False)
+
+    # ── 闸① ──
+    p = _run(["git", "fetch", "origin", "main"], repo)
+    if p.returncode != 0:
+        return {"ok": False, "gate": "fetch", "head": head0,
+                "why": (p.stderr or p.stdout).strip()[:200] or "git fetch 失败"}
+    log("已 fetch 远端 main")
+
+    # ── 闸② ──
+    if _run(["git", "cat-file", "-e", f"{remote_sha}^{{commit}}"], repo).returncode != 0:
+        return {"ok": False, "gate": "object", "head": head0,
+                "why": f"远端提交 {remote_sha[:8]} 不在本地（fetch 没拿到它）"}
+    log(f"远端提交 {remote_sha[:8]} 确实在本地")
+
+    # ── 闸③ ──
+    head_tree = git(repo, "rev-parse", "HEAD^{tree}", check=False)
+    rem_tree = git(repo, "rev-parse", f"{remote_sha}^{{tree}}", check=False)
+    if not rem_tree or rem_tree != head_tree:
+        return {"ok": False, "gate": "tree", "head": head0,
+                "why": f"两边内容树不同（本地 {head_tree[:10]} / 远端 {rem_tree[:10]}）"}
+    log("两边内容树一致")
+
+    # ── 三道都过，才动 HEAD。`--soft`：工作区与暂存区一个字节都不碰 ──
+    git(repo, "reset", "--soft", remote_sha)
+    head1 = git(repo, "rev-parse", "HEAD", check=False)
+    return {"ok": True, "head": head1, "was": head0, "tree": head_tree}
+
+
 def commit_all(repo: Path, message: str) -> dict:
-    """`git add -A` + commit。没有改动时返回 skipped。"""
-    if not git(repo, "status", "--porcelain", check=False):
+    """`git add -A` + commit。没有改动时返回 skipped。
+
+    ★ 2026-10-15：提交**之前**先 `git pull --rebase`。
+      远端比你本地新时（典型：你刚在终端推过），不拉就提交会造出一个父仍是旧 HEAD 的
+      兄弟提交 —— 那正是让终端 `git push` 被拒的形状。拉不下来就报错停下。
+    """
+    if not _status_lines(repo):
         return {"ok": True, "skipped": True, "reason": "工作区没有改动"}
+    _pull_rebase(repo)
     git(repo, "add", "-A")
     # ★ 绝不 --no-verify：站规（AGENTS §3）
     # 提交信息从 stdin 走（-F -），避免中文多行被命令行转义搞坏
@@ -394,7 +492,7 @@ def push(repo: Path, on_log=None) -> dict:
             "请把「设置」里的仓库路径改对。"
         )
 
-    if git(repo, "status", "--porcelain", check=False):
+    if _status_lines(repo):
         raise GitError("工作区还有没提交的改动 —— 本通道只推已提交的内容。请先在「发布」里提交。")
 
     cmp = compare(repo, token)
@@ -470,5 +568,21 @@ def push(repo: Path, on_log=None) -> dict:
         say(f"⚠ 远端 main 现在读到的是 {after[:8]}，本次构造的是 {commit['sha'][:8]} —— "
             f"内容已上传，但没读到 ref 指向它；请到网页上确认一次")
     say("★ 注意：远端这个提交是本通道用 GitHub API 建的，sha 与本地不同，但**内容完全相同**。")
+
+    # ★★ 2026-10-15：把本地 HEAD 对齐到远端那个提交。
+    #   不做这一步的话，本地与远端是**兄弟**（API 建的那个提交，父是"远端当时的 main"，
+    #   不是本地刚提交的那个）⇒ 回到终端 `git push` 会被拒：
+    #     Updates were rejected because the remote contains work that you do not have locally
+    #   `_sync_with_remote` 自带三道闸，任何一道不过就原地停下、一个字节都不改。
+    sync = _sync_with_remote(repo, commit["sha"], say)
+    if sync.get("ok"):
+        say(f"✔ 本地已对齐到远端 {sync['head'][:8]}（工作区一个字没动）")
+    else:
+        say(f"⚠ 本地没能对齐（闸 {sync.get('gate')}）：{sync.get('why')}")
+        say("  远端已经是新的，内容也对；只是本地历史暂时分叉，"
+            "在终端 git push 会被拒。要么重开一次写作台再点一次发布，要么用下面的命令自己收尾：")
+        say(f"    git fetch origin main && git reset --soft {commit['sha'][:8]}")
+
     return {"ok": ok, "sha": commit["sha"], "sha_short": commit["sha"][:8],
-            "remote": after, "remote_short": after[:8], "files": files, "messages": messages}
+            "remote": after, "remote_short": after[:8], "files": files, "messages": messages,
+            "synced": bool(sync.get("ok")), "sync_gate": sync.get("gate")}

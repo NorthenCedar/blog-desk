@@ -70,3 +70,6 @@ _fixture_out/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# 打包用的虚拟环境（README 建议装在这里，不要污染系统 Python）
+.venv/
