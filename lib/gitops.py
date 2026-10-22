@@ -1,37 +1,18 @@
 # -*- coding: utf-8 -*-
 """写作台 · Git 与推送。
 
-════════════════════════════════════════════════════════════════════════
-为什么推送**不走 `git push`**
-════════════════════════════════════════════════════════════════════════
-本机实测（2026-10-06 起，反复确认）：`github.com:443` 被重置 / 超时；
-`ssh git@github.com:22` TCP 通但没有公钥；git 协议 9418 阻塞；
-几个常见加速域返回 401。
-**唯一可用通路是 GitHub REST API**（blobs → trees → commits → refs）。
-仓库里已有一个同构脚本 `_probe/_push-via-api.py`，本模块是它的**库化版本**
-（同一套坑，一条都没省）：
+发布走普通、非强制 Git push，保留 AI 与写作台的真实提交历史。
+fetch 只更新远端跟踪引用；远端领先或分叉就停下，由用户同步，绝不自动
+stash、rebase 或 reset。提交只处理写作台内容路径，其他工作区或暂存区改动
+会阻断发布。Windows 系统代理在每次网络命令前读取，只通过命令级 -c 使用。
 
-  ① 必须证明「远端内容 == 本地历史的某一点」才能拿它当 parent
-     （API 是「基于某个 parent 建 commit」，不是「推一串历史」）。
-  ② 读文件内容必须用 **HEAD 的 blob**，不能用工作区文件
-     （本机 core.autocrlf=true ⇒ 工作区 CRLF、仓库 LF，而 git status 看不出差异）。
-  ③ 「远端是不是本地祖先」会假失败 —— API 建的 commit 本地没有那个对象，
-     `merge-base --is-ancestor` 必然失败。改用 **tree sha** 判内容等价
-     （见 `compare()`；`status()` 也走它，绝不拿 rev-list 计数冒充同步状态）。
-  ④ ★ `git fetch` / `git pull` 在本机**不可能成功**（443 被重置，实测 SSL EOF）
-     ⇒ 别写 "推完顺便对齐本地" 的代码。远端 sha 只记进 .git/desk-remote-main。
-  ⑤ 凭据：优先环境变量 GH_TOKEN，否则 ctypes CredReadW 读
-     `git:https://github.com`（**blob 是 UTF-16LE**），绕开经常 EBUSY 的
-     git-credential-manager。
-
-★ 为什么整个文件用 Python 而不是 Node：本机 Node 的 child_process **全线 EBUSY**，
-  连 spawn 自己都失败（沙箱豁免后依旧）⇒ 凡是"脚本要跑外部命令"的地方都必须 Python。
+旧版 API/blob 与历史对齐工具保留供旧测试使用，发布入口不再调用它们。
 """
 
 from __future__ import annotations
 
-import base64
 import ctypes
+import hashlib
 import json
 import os
 import subprocess
@@ -103,6 +84,49 @@ def git_bin(repo: Path, *args: str, timeout: int = 180) -> bytes:
     return p.stdout
 
 
+def _system_proxy() -> str:
+    """读取当前 Windows 系统代理；不写注册表，也不更改 Git/TLS 配置。"""
+    if os.name != "nt":
+        return ""
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Internet Settings") as key:
+            if not winreg.QueryValueEx(key, "ProxyEnable")[0]:
+                return ""
+            value = str(winreg.QueryValueEx(key, "ProxyServer")[0]).strip()
+    except FileNotFoundError:
+        return ""
+    if "=" in value:
+        choices = dict(part.strip().split("=", 1) for part in value.split(";") if "=" in part)
+        value = choices.get("https", choices.get("http", "")).strip()
+    return value if not value or "://" in value else "http://" + value
+
+
+def _network_git(repo: Path, *args: str) -> str:
+    proxy = _system_proxy()
+    options = ["-c", "http.proxy=" + proxy] if proxy else []
+    p = _run(["git", *options, *args], repo)
+    if p.returncode != 0:
+        raise GitError(f"git {args[0]} 失败：{(p.stderr or p.stdout).strip()[:600]}")
+    return (p.stdout or "").strip()
+
+
+def _fetch_main(repo: Path) -> dict:
+    _network_git(repo, "fetch", "--no-tags", "origin",
+                 "refs/heads/main:refs/remotes/origin/main")
+    sha = git(repo, "rev-parse", "refs/remotes/origin/main")
+    return {"sha": sha, "tree": git(repo, "rev-parse", f"{sha}^{{tree}}")}
+
+
+def _is_ancestor(repo: Path, older: str, newer: str) -> bool:
+    p = _run(["git", "merge-base", "--is-ancestor", older, newer], repo)
+    if p.returncode not in (0, 1):
+        raise GitError("无法确认 Git 历史关系：" + (p.stderr or p.stdout).strip()[:300])
+    return p.returncode == 0
+
+
 def blob_bytes(repo: Path, path: str) -> bytes | None:
     """取 HEAD 里某个文件的**原始字节**；HEAD 里没有它（= 本次提交把它删了）返回 None。
 
@@ -148,22 +172,11 @@ def remote_main(token: str | None = None) -> dict:
 
 
 def compare(repo: Path, token: str | None = None) -> dict:
-    """**本地 HEAD 与远端 main 的内容关系**（这是判断"要不要推"的唯一正确依据）。
+    """fetch 后比较真实历史；保留界面使用的 synced/ahead/diverged 字段。
 
-    ★ 为什么不用 ahead/behind 计数：
-      本通道用 GitHub API 建提交 ⇒ **远端的 commit sha 本地没有那个对象**，
-      `git rev-list --left-right --count <远端sha>...HEAD` 会直接报错。
-      更糟的是它**不抛异常只返回空**，解析出来就是 0/0 ——
-      界面于是显示"已同步"，而实际本地多着东西。这是个会说谎的状态，必须避免。
-      ⇒ 改用 **tree sha** 判内容（内容是内容的函数，与谁建的提交无关）。
-
-    返回 mode：
-      synced   —— 两边内容一字不差
-      ahead    —— 远端内容是本地历史里的某一点，本地多出 pending 个提交
-      diverged —— 远端内容不在本地最近 200 个提交里 ⇒ 远端有你没有的东西，别覆盖
+    token 参数仅为旧调用方兼容。历史不同但内容树相同也不能冒充已同步。
     """
-    tok = token or get_token()
-    rem = remote_main(tok)
+    rem = _fetch_main(repo)
     head = git(repo, "rev-parse", "HEAD")
     head_tree = git(repo, "rev-parse", "HEAD^{tree}")
     dirty = _status_lines(repo)
@@ -173,21 +186,15 @@ def compare(repo: Path, token: str | None = None) -> dict:
         "head": head, "head_tree": head_tree,
         "dirty": dirty, "dirty_count": len(dirty),
     }
-    if rem["tree"] == head_tree:
-        out.update({"mode": "synced", "pending": 0, "base": head})
+    if rem["sha"] == head:
+        out.update({"mode": "synced", "relation": "same", "pending": 0, "base": head})
         return out
-
-    base = None
-    for c in git(repo, "rev-list", "--max-count=200", "HEAD", check=False).split("\n"):
-        if c and git(repo, "rev-parse", f"{c}^{{tree}}", check=False) == rem["tree"]:
-            base = c
-            break
-    if base:
-        n = len([x for x in git(repo, "rev-list", f"{base}..HEAD", check=False).split("\n") if x.strip()])
-        out.update({"mode": "ahead", "pending": n, "base": base})
+    if _is_ancestor(repo, rem["sha"], head):
+        n = int(git(repo, "rev-list", "--count", f"{rem['sha']}..{head}"))
+        out.update({"mode": "ahead", "relation": "ahead", "pending": n, "base": rem["sha"]})
         return out
-
-    out.update({"mode": "diverged", "pending": None, "base": None})
+    relation = "behind" if _is_ancestor(repo, head, rem["sha"]) else "diverged"
+    out.update({"mode": "diverged", "relation": relation, "pending": None, "base": None})
     return out
 
 
@@ -233,32 +240,118 @@ def status(repo: Path) -> dict:
 
 def changed_files(repo: Path) -> list[str]:
     """工作区改动（含未跟踪）。"""
-    raw = "\n".join(_status_lines(repo))
-    files = []
-    for line in raw.split("\n"):
-        if len(line) > 3:
-            files.append(line[3:].strip().strip('"'))
-    return files
+    return sorted({path for entry in _status_entries(repo)
+                   for path in (entry["path"], entry.get("old_path")) if path})
 
 
 def _status_lines(repo: Path) -> list[str]:
-    """`git status --porcelain` 的**唯一出口**：非空行列表。
+    """界面展示；解析统一走 NUL 分隔的 _status_entries，保留路径与状态空格。"""
+    return [f"{e['xy']} " + (f"{e['old_path']} -> " if e.get("old_path") else "") + e["path"]
+            for e in _status_entries(repo)]
 
-    ★★ 2026-10-15：每次调用都带 `-c core.quotePath=false`。
-       git 默认把非 ASCII 路径**转义成八进制**，于是站主写的中文文件名在
-       "改了哪些文件"那个列表里显示成 `?? "\351\243\216\346\231\257.md"` ——
-       一串谁也认不出的东西。
-       ⚠ 用 `-c`（单次生效）而**不是** `git config core.quotePath false`：
-          后者会在**站主的仓库**里留设置，本产品不该替用户改他的仓库配置。
-       ⚠ 这里是**唯一出口**，别再散着写 `git(repo, "status", "--porcelain")` ——
-          散着写就一定会漏掉某几处，而漏掉的那几处照样转义。
-    """
-    raw = git(repo, "-c", "core.quotePath=false", "status", "--porcelain", check=False)
-    return [l for l in raw.split("\n") if l.strip()]
+
+def _status_entries(repo: Path) -> list[dict]:
+    fields = git_bin(repo, "-c", "core.quotePath=false", "status", "--porcelain=v1",
+                     "-z", "--untracked-files=all").decode("utf-8", "surrogateescape").split("\0")
+    entries = []
+    i = 0
+    while i < len(fields) and fields[i]:
+        field = fields[i]
+        entry = {"xy": field[:2], "path": field[3:]}
+        i += 1
+        if "R" in entry["xy"] or "C" in entry["xy"]:
+            entry["old_path"] = fields[i]
+            i += 1
+        entries.append(entry)
+    return entries
+
+
+def _content_changes(repo: Path) -> list[dict]:
+    entries = _status_entries(repo)
+    blocked = []
+    for entry in entries:
+        if "U" in entry["xy"] or entry["xy"] in ("AA", "DD"):
+            raise GitError("仓库还有未解决的合并冲突，请先处理，写作台不会自动解决。")
+        for path in (entry["path"], entry.get("old_path")):
+            if path and not (path.startswith(("content/", "src/assets/talks/"))
+                             or path in ("src/tag-registry.ts", "docs/content-model.md")):
+                blocked.append(path)
+    if blocked:
+        raise GitError("发现写作台内容范围之外的工作区或暂存区改动，已停止发布："
+                       + "、".join(sorted(set(blocked))[:12])
+                       + "。请先完成或隔离这些改动，避免把 AI 源码一起提交。")
+    return entries
+
+
+def capture_publish_state(repo: Path) -> dict:
+    """纯本地发布快照；调用方可用 == 检查校验期间的 HEAD、索引及文件变化。"""
+    head = git(repo, "rev-parse", "HEAD")
+    branch = git(repo, "symbolic-ref", "--quiet", "--short", "HEAD", check=False)
+    entries = _status_entries(repo)
+    paths = sorted({p for e in entries for p in (e["path"], e.get("old_path")) if p})
+    files = []
+    for path in paths:
+        p = repo / path
+        if p.is_symlink():
+            source = os.fsencode(os.readlink(p))
+            data = b"symlink\0" + source
+            hash_args = ['--no-filters', '--stdin']
+        elif p.is_file():
+            data = p.read_bytes()
+            source = data
+            hash_args = ['--path=' + path, '--stdin']
+        elif p.exists():
+            raise GitError(f"无法确认目录或子模块的内容归属，已停止发布：{path}")
+        else:
+            data = None
+        blob = None
+        if data is not None:
+            hashed = proc.run(['git', 'hash-object', *hash_args], cwd=str(repo),
+                              input=source, capture_output=True)
+            if hashed.returncode:
+                raise GitError('无法确认暂存后的文件摘要，已停止发布：' + path)
+            blob = hashed.stdout.decode('ascii').strip()
+        files.append({"path": path,
+                      "worktree_sha256": hashlib.sha256(data).hexdigest() if data is not None else None,
+                      "raw_blob_sha": hashlib.sha1(b'blob ' + str(len(source)).encode() + b'\0' + source).hexdigest() if data is not None else None,
+                      "clean_blob_sha": blob})
+    index = git_bin(repo, "ls-files", "--stage", "-z", "--", *paths) if paths else b""
+    if git(repo, "rev-parse", "HEAD") != head:
+        raise GitError("检查期间本地 HEAD 已变化，请等待 AI/Git 操作结束后再发布。")
+    return {"head": head, "branch": branch, "status": entries, "files": files,
+            "index_entries": index.decode("utf-8", "surrogateescape").split("\0")}
+
+
+def _require_same_head(repo: Path, head: str) -> None:
+    if (git(repo, "rev-parse", "HEAD") != head
+            or git(repo, "symbolic-ref", "--quiet", "--short", "HEAD", check=False) != "main"):
+        raise GitError("检查期间本地 HEAD 或分支已变化，请等待 AI/Git 操作结束后再发布。")
+
+
+def preflight(repo: Path) -> dict:
+    """构建前/提交前安全门；只 fetch，不修改工作区、索引或本地分支。"""
+    repo = Path(repo)
+    _content_changes(repo)
+    before = capture_publish_state(repo)
+    if before["branch"] != "main":
+        raise GitError("写作台只能从本地 main 发布，请先切回 main 并完成同步。")
+    origin = git(repo, "remote", "get-url", "origin", check=False)
+    if REPO not in origin.replace("\\", "/"):
+        raise GitError(f"这个仓库的 origin 不是 {REPO}，已拒绝发布；请检查仓库路径。")
+    result = compare(repo)
+    if capture_publish_state(repo) != before:
+        raise GitError("检查期间工作区、暂存区或 HEAD 已变化，请等待 AI/Git 操作结束后再发布。")
+    if result["mode"] == "diverged":
+        relation = "远端 main 领先本地" if result["relation"] == "behind" else "本地与远端 main 已分叉"
+        raise GitError(relation + "，请先完成同步再发布；写作台不会自动 stash、rebase 或 reset。")
+    result.update({"ok": True, "branch": before["branch"], "files": changed_files(repo)})
+    return result
 
 
 def _pull_rebase(repo: Path, on_log=None) -> dict:
-    """提交前先 `git pull --rebase origin main`：远端比你本地新时，别造分叉的兄弟提交。
+    """旧版兼容工具；当前 preflight/commit_all/push 均不调用。
+
+    提交前先 `git pull --rebase origin main`：远端比你本地新时，别造分叉的兄弟提交。
 
     ★ 只做**读**+重放本地提交，不碰远端。
     ⚠ 拉不下来（冲突 / 没网 / 没有远端对象）⇒ **直接报错、不提交**：
@@ -280,7 +373,9 @@ def _pull_rebase(repo: Path, on_log=None) -> dict:
 
 
 def _sync_with_remote(repo: Path, remote_sha: str, on_log=None) -> dict:
-    """API 推成功之后，把本地 HEAD 对齐到远端那个提交。返回 {ok, gate, head, why, ...}。
+    """旧版兼容工具；当前发布入口禁止调用，也不再需要 API 后对齐。
+
+    API 推成功之后，把本地 HEAD 对齐到远端那个提交。返回 {ok, gate, head, why, ...}。
 
     ★★ 为什么必须有这一步（2026-10-15 站主报「推成功了，终端却推不上去」）：
       本通道用 GitHub API 建提交（blob → tree → commit → PATCH ref），而那个提交的
@@ -334,26 +429,35 @@ def _sync_with_remote(repo: Path, remote_sha: str, on_log=None) -> dict:
 
 
 def commit_all(repo: Path, message: str) -> dict:
-    """`git add -A` + commit。没有改动时返回 skipped。
-
-    ★ 2026-10-15：提交**之前**先 `git pull --rebase`。
-      远端比你本地新时（典型：你刚在终端推过），不拉就提交会造出一个父仍是旧 HEAD 的
-      兄弟提交 —— 那正是让终端 `git push` 被拒的形状。拉不下来就报错停下。
-    """
-    if not _status_lines(repo):
+    """检查历史与归属后只提交明确内容路径；不自动拉取重放或收录 AI 源码。"""
+    repo = Path(repo)
+    state = preflight(repo)
+    if not state["files"]:
         return {"ok": True, "skipped": True, "reason": "工作区没有改动"}
-    _pull_rebase(repo)
-    git(repo, "add", "-A")
+    before = capture_publish_state(repo)
+    _require_same_head(repo, state["head"])
+    entries = _content_changes(repo)
+    # 已暂存的删除/重命名不再 add 一个已从索引移除的旧路径。
+    to_stage = sorted({e["path"] for e in entries if e["xy"] == "??" or e["xy"][1] != " "})
+    if to_stage:
+        git(repo, "add", "--", *to_stage)
+    _content_changes(repo)
+    after = capture_publish_state(repo)
+    if any(before[key] != after[key] for key in ("head", "branch", "files")):
+        raise GitError("暂存期间内容或 HEAD 已变化，已停止提交；请检查后重试。")
+    _require_same_head(repo, state["head"])
     # ★ 绝不 --no-verify：站规（AGENTS §3）
     # 提交信息从 stdin 走（-F -），避免中文多行被命令行转义搞坏
-    p = proc.run(["git", "commit", "-F", "-"], cwd=str(repo),
+    # --only 让另一进程此刻暂存的其他路径也不能被这一笔顺带收录；保留 hooks。
+    p = proc.run(["git", "commit", "--only", "-F", "-", "--", *state["files"]], cwd=str(repo),
                  input=message, capture_output=True, text=True,
                  encoding="utf-8", errors="replace")
     if p.returncode != 0:
         raise GitError(f"提交失败：{(p.stderr or p.stdout).strip()[:400]}")
     sha = git(repo, "rev-parse", "HEAD", check=False)
     return {"ok": True, "sha": sha, "sha_short": sha[:8],
-            "subject": git(repo, "log", "-1", "--pretty=%s", check=False)}
+            "subject": git(repo, "log", "-1", "--pretty=%s", check=False),
+            "files": state["files"]}
 
 
 # ────────────────────────────── 凭据 ──────────────────────────────
@@ -461,128 +565,44 @@ def git_remote_head() -> str:
     return _gh("GET", f"/repos/{REPO}/git/ref/heads/main", tok)["object"]["sha"]
 
 
-def push(repo: Path, on_log=None) -> dict:
-    """把本地 HEAD 推上去。返回 {ok, sha, sha_short, files, messages}。
-
-    ★ 对齐本地与远端这件事，本通道**做不到也不该硬做**：
-      `git fetch` 在本机连不通（github.com:443 SSL 被重置，已实测），
-      而远端 sha 是 API 建的提交、本地根本没有那个对象。
-      早先版本在这里写 `git reset --soft origin/main` —— 因为 fetch 静默失败，
-      `origin/main` 停在陈旧引用上，这句会把 HEAD **退回旧提交**（工作区内容不变，
-      但历史被改写）。现已删除，改为：只把远端 sha 记进 .git/desk-remote-main。
-      内容是否一致一律由 `compare()` 用 tree sha 判定 —— 不依赖提交 sha 相等。
-    """
+def push(repo: Path, on_log=None, expected_head: str | None = None) -> dict:
+    """普通非强制 push；固定已检查的 SHA，保留原提交链与并发产生的本地提交。"""
+    repo = Path(repo)
     log = on_log or (lambda *_: None)
     messages: list[str] = []
 
-    def say(m):
-        messages.append(m)
-        log(m)
+    def say(message):
+        messages.append(message)
+        log(message)
 
-    token = get_token()
-    local_sha = git(repo, "rev-parse", "HEAD")
+    state = preflight(repo)
+    head = state["head"]
+    if expected_head is not None and head != expected_head:
+        raise GitError('校验后本地 HEAD 已变化，本次没有推送；请重新校验新提交')
+    if state["dirty_count"]:
+        raise GitError("工作区还有没提交的内容改动，请先提交；本通道只推已提交的内容。")
+    say(f"本地 HEAD {head[:8]} ｜ 远端 main {state['remote_sha'][:8]}")
+    _require_same_head(repo, head)
+    if state["mode"] == "synced":
+        say("本地与远端提交一致，已经同步")
+        write_marker(repo, head)
+        return {"ok": True, "up_to_date": True, "sha": head, "sha_short": head[:8],
+                "remote": head, "remote_short": head[:8], "files": [],
+                "messages": messages, "synced": True, "sync_gate": None,
+                "head_changed": False}
 
-    # ★ 安全闸：核对这个仓库确实是要推的那个。
-    #   为什么必须有：推送用的是**硬编码的** REPO 常量，而"本地树"取自传入的 repo。
-    #   要是哪天指向了别的仓库/测试夹具，这一行是唯一挡住「把别处的内容推到站上」的东西。
-    url = git(repo, "remote", "get-url", "origin", check=False)
-    if f"{REPO}.git" not in url and REPO not in url:
-        raise GitError(
-            f"这个仓库的 origin 不是 {REPO}（现在是「{url or '没有 origin'}」）—— 拒绝推送。"
-            "请把「设置」里的仓库路径改对。"
-        )
-
-    if _status_lines(repo):
-        raise GitError("工作区还有没提交的改动 —— 本通道只推已提交的内容。请先在「发布」里提交。")
-
-    cmp = compare(repo, token)
-    remote_sha, remote_tree = cmp["remote_sha"], cmp["remote_tree"]
-    say(f"本地 HEAD {local_sha[:8]} ｜ 远端 main {remote_sha[:8]}")
-
-    if cmp["mode"] == "synced":
-        say("内容一致 —— 远端已经是最新，没什么要推的")
-        write_marker(repo, remote_sha)
-        return {"ok": True, "up_to_date": True, "messages": messages, "files": [],
-                "remote": remote_sha, "remote_short": remote_sha[:8]}
-    if cmp["mode"] == "diverged":
-        raise GitError(
-            "远端有你本机没有的改动（远端内容不在本地最近 200 个提交里）⇒ 不能覆盖。"
-            "请先在别的机器/网页上处理好，或在本机用 GitHub API 把远端的内容取下来再推。"
-        )
-
-    base = cmp["base"]
-    say(f"远端内容是本地 {base[:8]} 的内容 ⇒ 本地多出 {cmp['pending']} 个提交，按这批推")
-
-    files = [f for f in git(repo, "diff", "--name-only", base, check=False).split("\n") if f.strip()]
-    if not files:
-        say("改动文件列表为空（内容树却不同）—— 这不该发生，已停下")
-        raise GitError("内部不一致：tree 不同但没有差异文件。请把这条日志发给开发者。")
-    say(f"要推 {len(files)} 个文件：{', '.join(files[:8])}{' …' if len(files) > 8 else ''}")
-
-    entries = []
-    for f in files:
-        # ★ 必须用 HEAD 的 blob（坑②），且必须走二进制安全的那条路（见 blob_bytes 的注释）。
-        content = blob_bytes(repo, f)
-        if content is None:
-            # 这个路径在 HEAD 里已经没有了 ⇒ 本次提交删掉了它。
-            # GitHub 的 tree API 用 `"sha": null` 表示「从这棵树里移除该路径」，
-            # 不是「把这个路径指向一个空 blob」—— 后者会留下一串 0 号空 blob。
-            entries.append({"path": f, "mode": "100644", "type": "blob", "sha": None})
-            say(f"  − 删除 {f}")
-            continue
-        blob = _gh("POST", f"/repos/{REPO}/git/blobs", token,
-                   {"content": base64.b64encode(content).decode("ascii"), "encoding": "base64"})
-        entries.append({"path": f, "mode": "100644", "type": "blob", "sha": blob["sha"]})
-    tree = _gh("POST", f"/repos/{REPO}/git/trees", token,
-               {"base_tree": remote_tree, "tree": entries})
-
-    if tree["sha"] != cmp["head_tree"]:
-        raise GitError(
-            "上传后的内容树与本地 HEAD 不一致 —— 为免留下半截状态，已中止（远端未改动）。"
-            f"远端树 {tree['sha'][:10]} vs 本地 {cmp['head_tree'][:10]}"
-        )
-
-    message = git(repo, "log", "-1", "--pretty=%s") + "\n\n" + git(repo, "log", "-1", "--pretty=%b")
-    commit = _gh("POST", f"/repos/{REPO}/git/commits", token,
-                 {"message": message, "tree": tree["sha"], "parents": [remote_sha]})
-    patched = _gh("PATCH", f"/repos/{REPO}/git/refs/heads/main", token,
-                  {"sha": commit["sha"], "force": False})
-
-    # ★★ 判据取三处、优先级从高到低（原因见 _settle_ref 的注释）：
-    #   ① PATCH 的**返回体** —— 它自己就把更新后的 ref 给了出来，最可信；
-    #   ② 带重试的回读 —— 分开"还没读到"与"真的没写"；
-    #   ③ 实在读不到就用本次构造的 sha（PATCH 已经返回 2xx，写是成功了）。
-    after = ((patched or {}).get("object") or {}).get("sha") or ""
-
-    def _read() -> str:
-        return _gh("GET", f"/repos/{REPO}/git/ref/heads/main", token)["object"]["sha"]
-
-    if after != commit["sha"]:
-        after = _settle_ref(_read, commit["sha"]) or after or commit["sha"]
-
-    write_marker(repo, after)
-    ok = after == commit["sha"]
-    if ok:
-        say(f"✔ 远端 main 已推进到 {after[:8]}")
-    else:
-        say(f"⚠ 远端 main 现在读到的是 {after[:8]}，本次构造的是 {commit['sha'][:8]} —— "
-            f"内容已上传，但没读到 ref 指向它；请到网页上确认一次")
-    say("★ 注意：远端这个提交是本通道用 GitHub API 建的，sha 与本地不同，但**内容完全相同**。")
-
-    # ★★ 2026-10-15：把本地 HEAD 对齐到远端那个提交。
-    #   不做这一步的话，本地与远端是**兄弟**（API 建的那个提交，父是"远端当时的 main"，
-    #   不是本地刚提交的那个）⇒ 回到终端 `git push` 会被拒：
-    #     Updates were rejected because the remote contains work that you do not have locally
-    #   `_sync_with_remote` 自带三道闸，任何一道不过就原地停下、一个字节都不改。
-    sync = _sync_with_remote(repo, commit["sha"], say)
-    if sync.get("ok"):
-        say(f"✔ 本地已对齐到远端 {sync['head'][:8]}（工作区一个字没动）")
-    else:
-        say(f"⚠ 本地没能对齐（闸 {sync.get('gate')}）：{sync.get('why')}")
-        say("  远端已经是新的，内容也对；只是本地历史暂时分叉，"
-            "在终端 git push 会被拒。要么重开一次写作台再点一次发布，要么用下面的命令自己收尾：")
-        say(f"    git fetch origin main && git reset --soft {commit['sha'][:8]}")
-
-    return {"ok": ok, "sha": commit["sha"], "sha_short": commit["sha"][:8],
-            "remote": after, "remote_short": after[:8], "files": files, "messages": messages,
-            "synced": bool(sync.get("ok")), "sync_gate": sync.get("gate")}
+    raw = git_bin(repo, "diff", "--name-only", "-z", state["remote_sha"], head)
+    files = [p for p in raw.decode("utf-8", "surrogateescape").split("\0") if p]
+    say(f"保留 {state['pending']} 笔本地提交，普通推送到 main…")
+    # 显式 SHA 固定本次发布快照。远端若并发前进，Git 的非快进检查会拒绝。
+    # 不用 HEAD:main，避免另一进程在命令启动前新增的未校验提交被一起推走。
+    _network_git(repo, "push", "--porcelain", "origin", f"{head}:refs/heads/main")
+    write_marker(repo, head)
+    current_head = git(repo, "rev-parse", "HEAD")
+    changed = current_head != head
+    say(f"远端 main 已推进到 {head[:8]}，原提交历史完整保留")
+    if changed:
+        say(f"发布期间本地新增了提交 {current_head[:8]}，已保留；这笔不在本次发布快照里")
+    return {"ok": True, "sha": head, "sha_short": head[:8], "remote": head,
+            "remote_short": head[:8], "files": files, "messages": messages,
+            "synced": not changed, "sync_gate": None, "head_changed": changed}

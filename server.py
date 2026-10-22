@@ -50,8 +50,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from lib import config as cfgmod
-from lib import gitops, images, proc
-from lib.content import Content, ContentError
+from lib import gitops, images, proc, videos
+from lib.content import Content, ContentError, ContentConflict
+from lib.videos import VideoError
 from lib.images import ImageError
 from lib.gitops import GitError
 
@@ -68,7 +69,7 @@ class App:
         self.repo = Path(repo)
         self.content = Content(self.repo)
         self.config = config or {}
-        self.push_lock = threading.Lock()
+        self.push_lock = threading.RLock()
         self.last_push: dict | None = None
         self.log_lines: list[str] = []
         # ★ 收到过几次请求。启动器靠它判断「桌面窗口到底开起来了没」：
@@ -123,9 +124,38 @@ class App:
 
     # ---- 一键推送 ----
 
+    def _check_verified_commit(self, snapshot: dict, sha: str) -> None:
+        """提交必须仍然只包含构建前的文件快照；不通过时只停下，不重写历史。"""
+        if gitops.git(self.repo, 'show', '-s', '--format=%P', sha) != snapshot['head']:
+            raise GitError('提交期间历史发生变化，本次没有推送；请刷新状态重新校验')
+        raw = gitops.git_bin(self.repo, 'diff', '--name-only', '--no-renames', '-z', snapshot['head'], sha)
+        changed = [p for p in raw.decode('utf-8', 'surrogateescape').split('\0') if p]
+        expected = {f['path']: f['clean_blob_sha'] for f in snapshot['files']}
+        # Git 对已有 CRLF 索引可能保留原字节；二者都必须来自校验前同一份内容。
+        originals = {f['path']: f.get('raw_blob_sha', f['clean_blob_sha']) for f in snapshot['files']}
+        if any(path not in expected for path in changed):
+            raise GitError('提交包含构建快照之外的文件，本次没有推送；请检查并发改动')
+        actual = {}
+        if expected:
+            tree = gitops.git_bin(self.repo, 'ls-tree', '-r', '-z', sha, '--', *expected)
+            for row in tree.decode('utf-8', 'surrogateescape').split('\0'):
+                if row:
+                    metadata, path = row.split('\t', 1)
+                    actual[path] = metadata.split()[2]
+        if any(actual.get(path) not in (blob, originals[path]) for path, blob in expected.items()):
+            raise GitError('提交内容与构建前快照不同，本次没有推送；请重新校验')
+
     def push(self, message: str, skip_verify: bool = False) -> dict:
         with self.push_lock:
             result = {"steps": [], "ok": False}
+
+            try:
+                gitops.preflight(self.repo)
+                snapshot = gitops.capture_publish_state(self.repo)
+            except GitError as e:
+                result['error'] = str(e)
+                result['steps'].append({'name': '发布前检查', 'ok': False, 'detail': str(e)})
+                return result
 
             if not skip_verify:
                 b = self.run_build()
@@ -138,7 +168,12 @@ class App:
             else:
                 result["steps"].append({"name": "构建与校验", "ok": True, "detail": "已跳过（你选的）"})
 
+            if gitops.capture_publish_state(self.repo) != snapshot:
+                result['error'] = '校验期间文件、暂存区或提交历史发生变化，本次没有发布。请刷新状态后重新校验'
+                return result
+
             files = gitops.changed_files(self.repo)
+            approved_sha = snapshot['head']
             if not files:
                 result["steps"].append({"name": "提交", "ok": True, "detail": "工作区没有改动"})
             else:
@@ -146,9 +181,16 @@ class App:
                 result["steps"].append({"name": "提交", "ok": c.get("ok", False),
                                         "detail": c.get("sha_short", "") + " " + c.get("subject", "")})
                 result["commit"] = c
+                if not c.get('skipped'):
+                    approved_sha = c['sha']
+                    try:
+                        self._check_verified_commit(snapshot, approved_sha)
+                    except GitError as e:
+                        result['error'] = str(e)
+                        return result
 
             try:
-                pr = gitops.push(self.repo, on_log=self.log)
+                pr = gitops.push(self.repo, on_log=self.log, expected_head=approved_sha)
                 result["push"] = pr
                 result["steps"].append({"name": "推送", "ok": pr["ok"],
                                         "detail": "远端 " + (pr.get("remote_short") or pr.get("sha_short", ""))})
@@ -220,10 +262,58 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- 路由 ----
 
+    def _video(self, q, head=False):
+        data, mime = videos.read_video(self.app.repo, q.get('name', [''])[0])
+        size = len(data)
+        start, end, code = 0, size - 1, 200
+        requested = self.headers.get('Range')
+        if requested:
+            match = re.fullmatch(r'bytes=(\d*)-(\d*)', requested)
+            if not match or not any(match.groups()):
+                match = None
+            if match:
+                left, right = match.groups()
+                if left:
+                    start = int(left)
+                    end = min(int(right), size - 1) if right else size - 1
+                elif int(right) > 0:
+                    start = max(0, size - int(right))
+                else:
+                    start = size
+            if not match or start >= size or start > end:
+                self.send_response(416)
+                self.send_header('Content-Range', f'bytes */{size}')
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+                return
+            code = 206
+        self.send_response(code)
+        self.send_header('Content-Type', mime)
+        self.send_header('Accept-Ranges', 'bytes')
+        self.send_header('Content-Length', str(end - start + 1))
+        self.send_header('Cache-Control', 'no-store')
+        if code == 206:
+            self.send_header('Content-Range', f'bytes {start}-{end}/{size}')
+        self.end_headers()
+        if not head:
+            self.wfile.write(data[start:end + 1])
+
+    def do_HEAD(self):  # noqa: N802
+        target = urlparse(self.path)
+        if target.path != '/api/video':
+            self.send_error(404)
+            return
+        try:
+            self._video(parse_qs(target.query), head=True)
+        except VideoError:
+            self.send_error(404)
+
     def do_GET(self):  # noqa: N802
         u = urlparse(self.path)
         q = parse_qs(u.query)
         try:
+            if u.path == '/api/video':
+                return self._video(q)
             if u.path == "/api/health":
                 return self._json({"ok": True, "repo": str(self.app.repo)})
             if u.path == "/api/state":
@@ -265,7 +355,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(cfgmod.public_config(self.app.config))
             # 静态
             return self._static("index.html" if u.path == "/" else u.path)
-        except (ContentError, ImageError) as e:
+        except (ContentError, ImageError, VideoError) as e:
             return self._json({"error": str(e)}, 400)
         except GitError as e:
             return self._json({"error": str(e)}, 502)
@@ -274,6 +364,18 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": f"{type(e).__name__}: {e}"}, 500)
 
     def do_POST(self):  # noqa: N802
+        # 同一个应用内的保存、上传、提交与发布互斥；外部 AI 更新另由 revision / Git 检查处理。
+        with self.app.push_lock:
+            self._post()
+
+    @staticmethod
+    def _base_revision(body):
+        revision = body.get('base_revision')
+        if not isinstance(revision, str) or not re.fullmatch(r'[0-9a-f]{64}', revision):
+            raise ContentError('缺少编辑版本，请重新读取后再保存；当前编辑内容尚未写入文件')
+        return revision
+
+    def _post(self):
         u = urlparse(self.path)
         try:
             body = self._body()
@@ -284,10 +386,10 @@ class Handler(BaseHTTPRequestHandler):
                 fm, text = body.get("frontmatter") or {}, body.get("body", "")
                 if body.get("create"):
                     return self._json(c.create_post(slug, fm))
-                return self._json(c.write_post(slug, fm, text))
+                return self._json(c.write_post(slug, fm, text, base_revision=self._base_revision(body)))
 
             if u.path == "/api/post/delete":
-                return self._json(c.delete_post(body.get("slug", "")))
+                return self._json(c.delete_post(body.get("slug", ""), base_revision=self._base_revision(body)))
 
             if u.path == "/api/tags":
                 # 加一个标签（写进 src/tag-registry.ts）
@@ -298,10 +400,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(c.remove_tag(body.get("name", "")))
 
             if u.path == "/api/talks":
-                return self._json(c.write_talks(body.get("items") or []))
+                return self._json(c.write_talks(body.get("items") or [], base_revision=self._base_revision(body)))
 
             if u.path == "/api/log":
-                return self._json(c.write_log(body.get("items") or []))
+                return self._json(c.write_log(body.get("items") or [], base_revision=self._base_revision(body)))
+
+            if u.path == '/api/video/upload':
+                try:
+                    data = base64.b64decode((body.get('data') or '').split(',')[-1], validate=True)
+                except (ValueError, TypeError) as e:
+                    raise VideoError('视频数据无效，请重新选择文件') from e
+                return self._json(videos.save_video(c, body.get('name', ''), data, body.get('where', ''), body.get('slug', '')))
 
             if u.path == "/api/upload":
                 data = base64.b64decode((body.get("data") or "").split(",")[-1])
@@ -347,7 +456,9 @@ class Handler(BaseHTTPRequestHandler):
 
             return self._json({"error": "没有这个接口"}, 404)
 
-        except (ContentError, ImageError) as e:
+        except ContentConflict as e:
+            return self._json({'error': str(e), 'conflict': True}, 409)
+        except (ContentError, ImageError, VideoError) as e:
             return self._json({"error": str(e)}, 400)
         except GitError as e:
             return self._json({"error": str(e)}, 502)

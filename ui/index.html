@@ -115,10 +115,11 @@
               <div class="row spread">
                 <div class="row tight">
                   <button class="btn sm" id="btn-insert-img">＋ 插入图片</button>
+                  <button class="btn sm" id="btn-insert-video">＋ 插入视频</button>
                   <button class="btn sm" id="btn-toggle-preview">预览</button>
                   <button class="btn sm" id="btn-insert-link">插入链接</button>
                 </div>
-                <span class="hint">正文用 Markdown；图片写 <code>![](./名字.jpg)</code></span>
+                <span class="hint">正文用 Markdown；视频支持 MP4 / WebM，单个最多 25 MiB</span>
               </div>
 
               <div class="stack" style="gap:6px">
@@ -271,6 +272,11 @@
                   <button class="btn sm" id="btn-talk-img">＋ 上传图片</button>
                   <button class="btn sm" id="btn-talk-img-from-wall">从相册挑</button>
                 </div>
+              </div>
+              <div class="stack" style="gap:var(--sp-2)">
+                <span class="hint">视频（MP4 / WebM，单个最多 25 MiB，不自动播放）</span>
+                <div id="t-videos" class="stack" style="gap:var(--sp-3)"></div>
+                <button class="btn sm" id="btn-talk-video" style="align-self:flex-start">＋ 上传视频</button>
               </div>
               <div class="row spread">
                 <button class="btn primary" id="btn-save-talk">保存说说</button>

@@ -24,7 +24,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
 import re
+import tempfile
+import uuid
 from pathlib import Path
 
 import yaml
@@ -80,6 +84,10 @@ def _detect_newline(raw: bytes) -> str:
 
 class ContentError(Exception):
     """内容层错误：消息直接给用户看，所以一律写中文、说清楚怎么办。"""
+
+
+class ContentConflict(ContentError):
+    """编辑快照过期：由 HTTP 层返回 409，禁止覆盖外部修改。"""
 
 
 # ────────────────────────────── frontmatter ──────────────────────────────
@@ -194,14 +202,37 @@ class Content:
 
     # ---------- 工具 ----------
 
+    @staticmethod
+    def revision(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else ''
+
+    def _check_revision(self, path: Path, base_revision: str | None) -> None:
+        if base_revision is not None and self.revision(path) != base_revision:
+            raise ContentConflict('文件已被 AI 或其他窗口更新，本次没有覆盖。请先复制保留当前编辑内容，再重新读取并合并')
+
     def _read(self, path: Path) -> tuple[str, str]:
         """读文本，返回 (内容, 原行尾)。"""
         raw = path.read_bytes()
         return raw.decode("utf-8"), _detect_newline(raw)
 
-    def _write(self, path: Path, text: str, newline: str) -> None:
+    def _write(self, path: Path, text: str, newline: str, base_revision: str | None = None) -> str:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(text.replace("\r\n", "\n").replace("\n", newline).encode("utf-8"))
+        raw = text.replace("\r\n", "\n").replace("\n", newline).encode("utf-8")
+        # 先完成序列化、视频校验和临时文件写入，再贴近替换时检查旧版本。
+        # 这是乐观并发保护；外部编辑器不遵守同一文件锁时，并非跨进程 CAS。
+        fd, name = tempfile.mkstemp(prefix='.' + path.name + '.', suffix='.tmp', dir=path.parent)
+        pending = Path(name)
+        try:
+            with os.fdopen(fd, 'wb') as stream:
+                stream.write(raw)
+                stream.flush()
+                os.fsync(stream.fileno())
+            self._check_revision(path, base_revision)
+            os.replace(pending, path)
+        finally:
+            pending.unlink(missing_ok=True)
+        # 返回本次实际写出的版本，不能把随后外部写入的版本误认为自己的。
+        return hashlib.sha256(raw).hexdigest()
 
     def slugify(self, title: str) -> str:
         """中文标题没法自动转 slug ⇒ 用日期+序号兜底，交给用户改。"""
@@ -253,21 +284,23 @@ class Content:
         fm_text, body = split_frontmatter(text)
         return {
             "slug": slug,
+            "revision": hashlib.sha256(text.encode('utf-8')).hexdigest(),
             "frontmatter": parse_frontmatter(fm_text),
             "body": body,
             "newline": nl,
             "dir": str(d),
         }
 
-    def write_post(self, slug: str, fm: dict, body: str) -> dict:
+    def write_post(self, slug: str, fm: dict, body: str, base_revision: str | None = None) -> dict:
         d = self.posts_dir / slug
         md = d / "index.md"
+        self._check_revision(md, base_revision)
         nl = "\n"
         if md.is_file():
             _, nl = self._read(md)
         text = f"---\n{render_post_frontmatter(fm)}\n---\n{body}"
-        self._write(md, text, nl)
-        return {"ok": True, "path": str(md)}
+        revision = self._write(md, text, nl, base_revision)
+        return {"ok": True, "path": str(md), "revision": revision}
 
     def create_post(self, slug: str, fm: dict) -> dict:
         if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", slug):
@@ -282,8 +315,9 @@ class Content:
         self.write_post(slug, fm, "\n")
         return {"ok": True, "slug": slug}
 
-    def delete_post(self, slug: str) -> dict:
+    def delete_post(self, slug: str, base_revision: str | None = None) -> dict:
         d = self.posts_dir / slug
+        self._check_revision(d / 'index.md', base_revision)
         if not d.is_dir():
             raise ContentError(f"找不到文章目录：content/posts/{slug}")
         # 只删这个目录（文章图与正文同目录 ⇒ 一并走）
@@ -304,8 +338,18 @@ class Content:
         fm_text, body = split_frontmatter(text)
         fm = parse_frontmatter(fm_text)
         head, _tail = _fm_head_upto(text, "items")
+        # 固定现有说说的旧评论标识；同日新增说说不再挪走原有赞和评论。
+        items = sorted(fm.get('items', []) or [], key=lambda x: str(x.get('date', '')), reverse=True)
+        counts = {}
+        stable = []
+        for item in items:
+            day = str(item.get('date', '')).replace('-', '')
+            nth = counts.get(day, 0)
+            counts[day] = nth + 1
+            stable.append({**item, 'id': item.get('id') or f"talk-{day}{'' if nth == 0 else chr(97 + nth)}"})
         return {
-            "items": fm.get("items", []) or [],
+            "items": stable,
+            "revision": hashlib.sha256(text.encode('utf-8')).hexdigest(),
             "title": fm.get("title", "说说"),
             "intro": fm.get("intro", ""),
             "head": head,      # items 之前的原文（含注释）—— 写回时原样用
@@ -313,8 +357,9 @@ class Content:
             "newline": nl,
         }
 
-    def write_talks(self, items: list[dict]) -> dict:
+    def write_talks(self, items: list[dict], base_revision: str | None = None) -> dict:
         md = self.pages_dir / "talks.md"
+        self._check_revision(md, base_revision)
         text, nl = self._read(md)
         head, _ = _fm_head_upto(text, "items")
         _, body = split_frontmatter(text)
@@ -323,6 +368,10 @@ class Content:
         lines = ["items:"]
         for it in items:
             lines.append(f"  - date: {yaml_scalar(it.get('date', ''))}")
+            identity = it.get('id') or 'talk-' + uuid.uuid4().hex
+            if not re.fullmatch(r'talk-[a-z0-9-]+', identity):
+                raise ContentError('说说标识无效，请重新读取')
+            lines.append(f"    id: {yaml_scalar(identity)}")
             lines.append(f"    text: {yaml_scalar(it.get('text', ''))}")
             if it.get("href"):
                 lines.append(f"    href: {yaml_scalar(it['href'])}")
@@ -332,9 +381,17 @@ class Content:
                 for im in imgs:
                     lines.append(f"      - src: {yaml_scalar(im.get('src', ''))}")
                     lines.append(f"        alt: {yaml_scalar(im.get('alt', ''))}")
+            clips = it.get('videos') or []
+            if clips:
+                from lib.videos import validate_reference
+                lines.append('    videos:')
+                for clip in clips:
+                    validate_reference(self.repo, clip.get('src', ''), clip.get('alt', ''))
+                    lines.append(f"      - src: {yaml_scalar(clip['src'])}")
+                    lines.append(f"        alt: {yaml_scalar(clip['alt'])}")
         new_text = f"---\n{head}\n" + "\n".join(lines) + "\n---\n" + body
-        self._write(md, new_text, nl)
-        return {"ok": True, "count": len(items)}
+        revision = self._write(md, new_text, nl, base_revision)
+        return {"ok": True, "count": len(items), "revision": revision}
 
     # ---------- 日志 log ----------
 
@@ -346,6 +403,7 @@ class Content:
         head, _ = _fm_head_upto(text, "items")
         return {
             "items": fm.get("items", []) or [],
+            "revision": hashlib.sha256(text.encode('utf-8')).hexdigest(),
             "title": fm.get("title", "日志"),
             "intro": fm.get("intro", ""),
             "head": head,
@@ -353,8 +411,9 @@ class Content:
             "newline": nl,
         }
 
-    def write_log(self, items: list[dict]) -> dict:
+    def write_log(self, items: list[dict], base_revision: str | None = None) -> dict:
         md = self.pages_dir / "log.md"
+        self._check_revision(md, base_revision)
         text, nl = self._read(md)
         head, _ = _fm_head_upto(text, "items")
         _, body = split_frontmatter(text)
@@ -369,8 +428,8 @@ class Content:
                 for c in ch:
                     lines.append(f"      - {yaml_scalar(c)}")
         new_text = f"---\n{head}\n" + "\n".join(lines) + "\n---\n" + body
-        self._write(md, new_text, nl)
-        return {"ok": True, "count": len(items)}
+        revision = self._write(md, new_text, nl, base_revision)
+        return {"ok": True, "count": len(items), "revision": revision}
 
     def next_version(self) -> str:
         """按现有日志推下一个版本号（v2.10 → v2.11）。"""

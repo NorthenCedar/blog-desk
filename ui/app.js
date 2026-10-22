@@ -274,6 +274,7 @@
     const fences = [];
     const inlines = [];
     const links = [];
+    const clips = [];
     let s = String(src || '').replace(/\r\n?/g, '\n');
 
     // ★ 抽取顺序有讲究：围栏代码 → 行内代码 → 图片 → 链接。
@@ -286,6 +287,16 @@
     s = s.replace(/`([^`\n]+)`/g, (_m, code) => {
       inlines.push(code);
       return `\u0000I${inlines.length - 1}\u0000`;
+    });
+    // 只放行写作台生成的本地视频，不允许正文任意 HTML 绕过预览的转义。
+    s = s.replace(/<video\b([^>]*)>[\s\S]*?<\/video>/gi, (html, attrs) => {
+      const u = /\bsrc="(\/videos\/[0-9a-f]{64}\.(?:mp4|webm))"/.exec(attrs)?.[1];
+      if (!u) return html;
+      const label = /\baria-label="([^"]*)"/.exec(attrs)?.[1] || '视频';
+      const decode = document.createElement('textarea');
+      decode.innerHTML = label;
+      clips.push(videoMarkup(u, decode.value, true));
+      return `\n\u0000V${clips.length - 1}\u0000\n`;
     });
     s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (_m, alt, u) => {
       links.push({ img: true, alt, u });
@@ -361,6 +372,12 @@
     for (let i = 0; i < lines.length; i++) {
       const raw = lines[i];
       const line = raw.trim();
+
+      if (/^\u0000V\d+\u0000$/.test(line)) {
+        flushAll();
+        out.push(clips[+line.replace(/\u0000V|\u0000/g, '')]);
+        continue;
+      }
 
       if (/^\u0000F\d+\u0000$/.test(line)) {
         flushAll();
@@ -821,7 +838,7 @@
 
   async function openPost(slug) {
     const p = await GET('/api/post?slug=' + encodeURIComponent(slug));
-    S.post = { slug, dir: p.dir, frontmatter: p.frontmatter || {}, body: p.body || '' };
+    S.post = { slug, dir: p.dir, frontmatter: p.frontmatter || {}, body: p.body || '', revision:p.revision };
     const fm = S.post.frontmatter;
 
     $('#editor-empty').style.display = 'none';
@@ -911,17 +928,21 @@
 
   async function savePost(thenPublish) {
     if (!S.post) return;
+    const target = S.post;
     const { frontmatter, body } = collectPost();
     const bad = validatePost(frontmatter);
     if (bad.length) {
       toast('还差一点：' + bad.join('；'), true);
       return;
     }
-    await POST('/api/post', { slug: S.post.slug, frontmatter, body });
-    S.post.frontmatter = frontmatter;
-    S.post.body = body;
-    toast('已保存 content/posts/' + S.post.slug + '/index.md');
+    const saved = await POST('/api/post', { slug: target.slug, frontmatter, body, base_revision: target.revision });
+    target.revision = saved.revision;
+    target.frontmatter = frontmatter;
+    target.body = body;
+    toast('已保存 content/posts/' + target.slug + '/index.md');
     await loadPosts();
+    // 等待保存期间可以打开另一篇，迟到的响应不能改它的缓存或带走页面。
+    if (S.post !== target) return;
     renderPostImages();
     renderPostMeta();
     if (thenPublish) go('publish');
@@ -966,7 +987,7 @@
       { okText: '删除', danger: true }
     );
     if (!ok) return;
-    await POST('/api/post/delete', { slug: S.post.slug });
+    await POST('/api/post/delete', { slug: S.post.slug, base_revision: S.post.revision });
     S.post = null;
     $('#editor-form').style.display = 'none';
     $('#editor-empty').style.display = '';
@@ -993,6 +1014,45 @@
     }
     await loadPosts();
     renderPostImages();
+  }
+
+  const videoPreviewURL = (src) => '/api/video?name=' + encodeURIComponent(src.slice('/videos/'.length));
+  function videoMarkup(src, caption, preview = false) {
+    const url = preview ? videoPreviewURL(src) : src;
+    return `<video controls preload="none" playsinline src="${esc(url)}" aria-label="${esc(caption)}" style="display:block;max-width:100%;height:auto"><a href="${esc(url)}">下载视频：${esc(caption)}</a></video>`;
+  }
+
+  async function uploadOwnerVideo(where) {
+    if (where === 'post' && !S.post) return toast('先打开一篇文章', true);
+    if (where === 'talks' && S.talkIdx < 0) return toast('先选一条说说', true);
+    const target = where === 'post' ? S.post : S.talks.items[S.talkIdx];
+    const files = await pickFiles('.mp4,.webm');
+    for (const file of files) {
+      if (!/\.(mp4|webm)$/i.test(file.name) || !file.size || file.size > 25 * 1024 * 1024) {
+        toast(`${file.name}：只接受单个不超过 25 MiB 的 MP4 / WebM`, true);
+        continue;
+      }
+      const answer = await askForm('视频说明', 'MP4 建议使用 H.264 + AAC；上传保留原文件，保存后再去发布。', [
+        {k:'caption', label:'视频内容说明', value:altFromName(file.name)},
+      ], {okText:'上传并插入'});
+      if (!answer) continue;
+      const caption = String(answer.caption || '').trim();
+      if (!caption) { toast('视频说明不能为空', true); continue; }
+      const uploaded = await POST('/api/video/upload', {
+        data:await fileToDataURL(file), name:file.name, where, slug:where === 'post' ? target.slug : '',
+      });
+      if (target !== (where === 'post' ? S.post : S.talks.items[S.talkIdx])) {
+        toast('视频已入库，但编辑对象已变化；未插入其他内容，请重新选择原条目', true);
+        return;
+      }
+      if (where === 'post') insertAtCursor($('#f-body'), `\n\n${videoMarkup(uploaded.src, caption)}\n\n`);
+      else {
+        const item = S.talks.items[S.talkIdx];
+        (item.videos ||= []).push({src:uploaded.src, alt:caption});
+        renderTalkVideos(item.videos);
+      }
+      toast('视频已入库，记得保存当前内容后再发布');
+    }
   }
 
   async function uploadCover() {
@@ -1042,6 +1102,7 @@
   }
 
   function initWrite() {
+    $('#btn-insert-video').addEventListener('click', guard($('#btn-insert-video'), () => uploadOwnerVideo('post')));
     $('#btn-new-post').addEventListener('click', () => newPost());
     $('#btn-refresh-posts').addEventListener('click', async () => {
       await loadPosts();
@@ -1067,7 +1128,7 @@
   async function loadLog() {
     const r = await GET('/api/log');
     const keep = S.log && S.logIdx >= 0 ? S.log.items[S.logIdx] : null;
-    S.log = { items: r.items || [], next_version: r.next_version || '' };
+    S.log = { items: r.items || [], next_version: r.next_version || '', revision:r.revision };
     S.logIdx = keep
       ? S.log.items.findIndex((x) => x.date === keep.date && x.version === keep.version
           && JSON.stringify(x.changes) === JSON.stringify(keep.changes))
@@ -1152,6 +1213,8 @@
 
   async function saveLog() {
     if (S.logIdx < 0) return;
+    const target = S.log;
+    const entry = target.items[S.logIdx];
     const cur = {
       date: $('#l-date').value.trim(),
       version: $('#l-ver').value.trim(),
@@ -1166,18 +1229,24 @@
     //   注意全角「：」不是坑 —— 别把它也算进来，那只是假警报。
     const risky = cur.changes.filter((c) => /:[ \t]/.test(c) || /:$/.test(c));
     const items = collectLogItems();
-    await POST('/api/log', { items });
+    const saved = await POST('/api/log', { items, base_revision: target.revision });
+    target.revision = saved.revision;
+    Object.assign(entry, cur);
+    const versions = items.map(it => /^v(\d+)\.(\d+)$/.exec(it.version || '')).filter(Boolean);
+    const last = versions.map(v => [Number(v[1]), Number(v[2])])
+      .sort((a, b) => b[0] - a[0] || b[1] - a[1])[0] || [0, 0];
+    target.next_version = `v${last[0]}.${last[1] + 1}`;
     const dup = items.filter((x) => x.version === cur.version).length > 1;
-    await loadLog();
+    // 不重新填表，保住请求期间继续输入的内容和新建条目。
+    if (S.log === target) renderLogList();
     const warn = risky.length ? `　⚠ ${risky.length} 条带「冒号+空格」，已自动加引号保护` : '';
     toast((dup ? `已保存，但 ${cur.version} 出现了多条 —— 检查一下`
                : `已保存 ${cur.version}（${cur.changes.length} 条改动）`) + warn, dup);
   }
 
   async function newLog() {
-    const items = S.log.items.map((it) => ({
-      date: String(it.date || ''), version: it.version || '', changes: (it.changes || []).map(String),
-    }));
+    // 保存请求可能仍在等待，保留条目对象，响应才能同步到原来的那一条。
+    const items = [...S.log.items];
     items.push({ date: today(), version: S.log.next_version || 'v2.11', changes: [''] });
     S.logIdx = items.length - 1;
     S.log.items = items;
@@ -1194,7 +1263,7 @@
     const items = S.log.items
       .filter((_x, i) => i !== S.logIdx)
       .map((x) => ({ date: String(x.date || ''), version: x.version || '', changes: (x.changes || []).map(String) }));
-    await POST('/api/log', { items });
+    await POST('/api/log', { items, base_revision: S.log.revision });
     S.logIdx = -1;
     await loadLog();
     toast('已删除');
@@ -1219,7 +1288,7 @@
   async function loadTalks() {
     const r = await GET('/api/talks');
     const keep = S.talks && S.talkIdx >= 0 ? S.talks.items[S.talkIdx] : null;
-    S.talks = { items: r.items || [] };
+    S.talks = { items: r.items || [], revision: r.revision };
     S.talkIdx = keep
       ? S.talks.items.findIndex((x) => x.date === keep.date && x.text === keep.text)
       : (S.talks.items.length ? 0 : -1);
@@ -1239,10 +1308,11 @@
       b.className = 'item';
       if (i === S.talkIdx) b.setAttribute('aria-selected', 'true');
       const n = (it.images || []).length;
+      const videos = (it.videos || []).length;
       b.innerHTML =
         `<div class="t">${esc(String(it.text || '').slice(0, 46) || '（空）')}</div>
          <div class="m"><span>${esc(it.date || '')}</span>${n ? `<span>${n} 张图</span>` : ''}
-         ${it.href ? '<span>带链接</span>' : ''}</div>`;
+         ${videos ? `<span>${videos} 个视频</span>` : ''}${it.href ? '<span>带链接</span>' : ''}</div>`;
       b.addEventListener('click', () => { S.talkIdx = i; renderTalkList(); fillTalkForm(); });
       box.appendChild(b);
     });
@@ -1262,6 +1332,22 @@
     $('#t-href').value = it.href || '';
     $('#t-text').value = it.text || '';
     renderTalkImages(it.images || []);
+    renderTalkVideos(it.videos || []);
+  }
+
+  function renderTalkVideos(clips) {
+    const box = $('#t-videos');
+    box.innerHTML = clips.length ? '' : '<span class="hint">（这条还没配视频）</span>';
+    clips.forEach((clip, index) => {
+      const row = document.createElement('div');
+      row.className = 'stack';
+      row.innerHTML = videoMarkup(clip.src, clip.alt || '视频', true) +
+        `<label class="field"><span>视频说明（必填）</span><input class="video-alt" data-i="${index}" value="${esc(clip.alt || '')}"></label>` +
+        '<button class="btn ghost sm" style="align-self:flex-start">从这条说说移除（原件保留）</button>';
+      row.querySelector('input').addEventListener('input', e => { clip.alt = e.target.value; });
+      row.querySelector('button').addEventListener('click', () => { clips.splice(index, 1); renderTalkVideos(clips); });
+      box.appendChild(row);
+    });
   }
 
   function renderTalkImages(imgs) {
@@ -1296,6 +1382,7 @@
    */
   function collectTalks() {
     const all = S.talks.items.map((it) => ({
+      ...it,
       date: String(it.date || ''),
       text: it.text || '',
       href: it.href || '',
@@ -1306,6 +1393,7 @@
       const box = $('#t-imgs');
       const imgs = S.talks.items[S.talkIdx].images || [];
       cur = {
+        ...S.talks.items[S.talkIdx],
         date: $('#t-date').value.trim(),
         text: $('#t-text').value.trim(),
         href: $('#t-href').value.trim(),
@@ -1321,6 +1409,8 @@
 
   async function saveTalk() {
     if (S.talkIdx < 0) return;
+    const target = S.talks;
+    const entry = target.items[S.talkIdx];
     const { items, cur } = collectTalks();
     if (!cur) return;
     if (!cur.date) return toast('date 不能空', true);
@@ -1328,17 +1418,18 @@
     if (!cur.text) return toast('text 不能空', true);
     const noAlt = cur.images.filter((im) => !im.alt);
     if (noAlt.length) return toast(`有 ${noAlt.length} 张图没填 alt（站上每个 img 都必须有非空 alt）`, true);
-    await POST('/api/talks', { items });
-    await loadTalks();
+    if ((cur.videos || []).some(clip => !String(clip.alt || '').trim())) return toast('视频说明不能为空', true);
+    const saved = await POST('/api/talks', { items, base_revision: target.revision });
+    target.revision = saved.revision;
+    // 媒体列表可能在请求期间继续编辑，只同步本次保存的文字字段。
+    Object.assign(entry, { date: cur.date, text: cur.text, href: cur.href });
+    if (S.talks === target) renderTalkList();
     toast('已保存 ' + cur.date + ' 这条说说');
   }
 
   function newTalk() {
-    const items = S.talks.items.map((it) => ({
-      date: String(it.date || ''), text: it.text || '', href: it.href || '',
-      images: (it.images || []).map((im) => ({ src: im.src, alt: im.alt || '' })),
-    }));
-    items.push({ date: today(), text: '', href: '', images: [] });
+    const items = [...S.talks.items];
+    items.push({ id:'talk-' + crypto.randomUUID(), date: today(), text: '', href: '', images: [], videos: [] });
     S.talkIdx = items.length - 1;
     S.talks.items = items;
     renderTalkList();
@@ -1354,10 +1445,11 @@
     const items = S.talks.items
       .filter((_x, i) => i !== S.talkIdx)
       .map((x) => ({
+        ...x,
         date: String(x.date || ''), text: x.text || '', href: x.href || '',
         images: (x.images || []).map((im) => ({ src: im.src, alt: im.alt || '' })),
       }));
-    await POST('/api/talks', { items });
+    await POST('/api/talks', { items, base_revision: S.talks.revision });
     S.talkIdx = -1;
     await loadTalks();
     toast('已删除');
@@ -1411,6 +1503,7 @@
   }
 
   function initTalks() {
+    $('#btn-talk-video').addEventListener('click', guard($('#btn-talk-video'), () => uploadOwnerVideo('talks')));
     $('#btn-new-talk').addEventListener('click', () => newTalk());
     $('#btn-refresh-talks').addEventListener('click', () => loadTalks().then(() => toast('重新读过了')).catch((e) => toast(e.message, true)));
     $('#btn-save-talk').addEventListener('click', () => saveTalk().catch((e) => toast(e.message, true)));
@@ -1735,7 +1828,7 @@
        <div class="row"><span class="hint" style="min-width:78px">远端 main</span>
          <span style="color:${color}">${esc(syncText[1])}</span></div>
        <div class="row"><span class="hint" style="min-width:78px">说明</span>
-         <span class="hint">本机到 github.com:443 不通，推送走 GitHub API（内容一致，提交 sha 会与本地不同）。</span></div>`;
+         <span class="hint">使用普通 Git 推送，保留本地提交历史；远端更新或工作区混入源码改动时会暂停发布。</span></div>`;
     renderDiff(st);
     if (!$('#pub-msg').value.trim()) {
       $('#pub-msg').value = `写作台：内容更新（${stamp()}）`;
