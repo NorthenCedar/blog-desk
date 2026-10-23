@@ -265,6 +265,39 @@
     ta.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
+  function formatBodyBlock(body, start, end, level) {
+    const lines = [];
+    for (const match of body.matchAll(/([^\r\n]*)(\r?\n|$)/g)) {
+      if (!match[0] && match.index < body.length) continue;
+      if (!match[0] && body && !body.endsWith('\n')) continue;
+      lines.push({ text:match[1], newline:match[2], offset:match.index });
+    }
+    const first = Math.max(0, lines.findLastIndex(line => line.offset <= start));
+    const last = Math.max(first, lines.findLastIndex(line => line.offset < end || line.offset <= start));
+    let fence = null;
+    const output = lines.map((line, index) => {
+      // 只为识别代码边界剥去容器前缀，输出始终保留原行。
+      const probe = line.text.replace(/^(?: {0,3}>[ \t]?)+/, '').replace(/^\s*(?:[-+*]|\d+[.)])[ \t]+/, '');
+      const marker = /^\s*(`{3,}|~{3,})(.*)$/.exec(probe);
+      const inCode = !!fence || !!marker || /^(?: {4}|\t)/.test(line.text);
+      if (marker) {
+        if (!fence) fence = marker[1];
+        else if (marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = null;
+      }
+      if (index < first || index > last || inCode || (!line.text.trim() && start !== end) || /^\s*</.test(line.text)) return line.text + line.newline;
+      const text = line.text.replace(/^ {0,3}#{1,6}(?:[ \t]+|$)/, '');
+      return (level ? '#'.repeat(level) + ' ' : '') + text + line.newline;
+    });
+    const result = output.join('');
+    const before = output.slice(0, first).join('').length;
+    if (start === end) {
+      const diff = output[first].length - (lines[first].text + lines[first].newline).length;
+      const cursor = Math.max(before, start + diff);
+      return { body:result, start:cursor, end:cursor };
+    }
+    return { body:result, start:before, end:output.slice(0, last+1).join('').length - lines[last].newline.length };
+  }
+
   /* ══════════════════ 四、迷你 Markdown ══════════════════
      只覆盖站上文章真正会用的语法；**不求全**，求可预期。
      图片路径：正文写 `![](./名字.jpg)`（相对文章目录）⇒ 换成 /api/file?path=<绝对路径>。
@@ -1102,6 +1135,15 @@
   }
 
   function initWrite() {
+    $$('[data-body-level]').forEach(button => {
+      button.addEventListener('mousedown', event => event.preventDefault());
+      button.addEventListener('click', () => {
+        const body = $('#f-body');
+        const result = formatBodyBlock(body.value, body.selectionStart, body.selectionEnd, Number(button.dataset.bodyLevel));
+        body.value = result.body; body.focus(); body.setSelectionRange(result.start, result.end);
+        body.dispatchEvent(new Event('input', { bubbles:true }));
+      });
+    });
     $('#btn-insert-video').addEventListener('click', guard($('#btn-insert-video'), () => uploadOwnerVideo('post')));
     $('#btn-new-post').addEventListener('click', () => newPost());
     $('#btn-refresh-posts').addEventListener('click', async () => {
