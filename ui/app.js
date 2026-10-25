@@ -409,7 +409,8 @@
     //   全都抽成 \u0000XXn\u0000 占位符 —— 这种字符不含 HTML 特殊字符，转义后仍然在。
     const codeBlocks = bodyCodeBlocks(s);
     for (const block of codeBlocks.blocks.slice().reverse()) {
-      if (block.nested || !block.closed) continue;
+      // nested 只限制源码格式操作；预览仍抽取容器内的闭合代码，避免当作正文或图片解析。
+      if (!block.closed) continue;
       const open = codeBlocks.lines[block.first], close = codeBlocks.lines[block.last];
       fences.push(s.slice(open.offset + open.text.length + open.newline.length, close.offset).replace(/\n$/, ''));
       s = s.slice(0, open.offset) + `\n\u0000F${fences.length - 1}\u0000\n` + s.slice(close.offset + close.text.length);

@@ -103,6 +103,18 @@ test('预览保留长围栏内的三个反引号，波浪围栏不变成普通�
   assert.equal(context.render('````python\nx = "```"\n````'),'<pre><code>x = &quot;```&quot;</code></pre>');
   assert.equal(context.render('~~~json\n{"a": 1}\n~~~'),'<pre><code>{&quot;a&quot;: 1}</code></pre>');
 });
+test('列表内已有代码仍抽取为代码预览，保留多行与源码缩进',()=>{
+  const input='- item\n\n  ```python\n  print(1)\n    print(2)\n  ```';
+  assert.equal(context.render(input),'<ul><li>item</li></ul>\n<pre><code>  print(1)\n    print(2)</code></pre>');
+});
+test('引用内已有代码继续抽取，原始行前缀与换行不会被合并成普通段落',()=>{
+  const input='> ```python\n> print(1)\n>     print(2)\n> ```';
+  assert.equal(context.render(input),'<pre><code>&gt; print(1)\n&gt;     print(2)</code></pre>');
+});
+test('嵌套长围栏预览保留内部反引号并转义 HTML，不把代码当视频或图片解析',()=>{
+  const input='> - ~~~~html\n>   <script>alert("x")</script>\n>   const fence = "```";\n>   ![image](https://example.invalid/image.png)\n>   ~~~~';
+  assert.equal(context.render(input),'<pre><code>&gt;   &lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;\n&gt;   const fence = &quot;```&quot;;\n&gt;   ![image](https://example.invalid/image.png)</code></pre>');
+});
 
 function editorHarness(text, selectionStart=0, selectionEnd=selectionStart) {
   const controls=new Map();
