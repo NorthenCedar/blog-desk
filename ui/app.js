@@ -55,7 +55,10 @@
     let j = null;
     try { j = await r.json(); } catch { /* 可能是空响应 */ }
     if (!r.ok || (j && j.error)) {
-      throw new Error((j && j.error) || `请求失败（HTTP ${r.status}）`);
+      const error = new Error((j && j.error) || `请求失败（HTTP ${r.status}）`);
+      // 发布失败仍携带构建详情；其他调用继续抛错，保存冲突不会被当成成功。
+      error.result = j;
+      throw error;
     }
     return j || {};
   }
@@ -1030,7 +1033,7 @@
     setOrDrop('coverAlt', $('#f-coveralt').value.trim());
     const tags = chosenTags();
     if (tags.length) fm.tags = tags; else delete fm.tags;
-    if ($('#f-draft').value === 'true') fm.draft = true; else delete fm.draft;
+    fm.draft = $('#f-draft').value === 'true';
     return { frontmatter: fm, body: $('#f-body').value };
   }
 
@@ -2054,9 +2057,13 @@
         showPushResult(r, false);
       }
     } catch (e) {
-      $('#pub-log').textContent += '\n✘ ' + e.message + '\n';
-      toast(e.message, true);
-      renderSteps([{ name: '出错', state: 'bad', detail: e.message.slice(0, 60) }]);
+      if (e.result && Array.isArray(e.result.steps)) {
+        showPushResult(e.result, skipVerify);
+      } else {
+        $('#pub-log').textContent += '\n✘ ' + e.message + '\n';
+        toast(e.message, true);
+        renderSteps([{ name: '出错', state: 'bad', detail: e.message.slice(0, 60) }]);
+      }
     } finally {
       btnPush.disabled = false;
       btnCommit.disabled = false;
@@ -2084,8 +2091,8 @@
 
     if (r.ok) {
       toast(r.push && r.push.up_to_date ? '远端本来就是最新，没推' : '推上去了 —— 1–3 分钟后 Cloudflare 自动部署');
-    } else if (!r.error) {
-      toast('没有推成功，看下面的输出', true);
+    } else {
+      toast(r.error || '没有推成功，看下面的输出', true);
     }
   }
 
