@@ -121,8 +121,18 @@
                   <button class="btn sm" data-body-level="0" title="将当前段落或选中的行设为普通正文">正文</button>
                   <button class="btn sm" data-body-level="2" title="章节标题，发布后进入本文目录">章节标题</button>
                   <button class="btn sm" data-body-level="3" title="小标题，发布后进入本文目录">小标题</button>
+                  <button class="btn sm" id="btn-code-block" title="将选中的行合成一个代码块；没有选区时插入空块">代码块</button>
+                  <select class="code-language" id="code-language" aria-label="代码块语言" title="选择新代码块的语言；在已有块内选择可修改该块语言">
+                    <option value="python">Python</option>
+                    <option value="javascript">JavaScript</option>
+                    <option value="typescript">TypeScript</option>
+                    <option value="json">JSON</option>
+                    <option value="bash">Bash</option>
+                    <option value="text">纯文本</option>
+                    <option value="" id="code-language-original" hidden>原语言</option>
+                  </select>
                 </div>
-                <span class="hint">选中正文后点章节标题／小标题，发布时自动生成目录；视频支持 MP4 / WebM，单个最多 25 MiB</span>
+                <span class="hint">选中多行可合成代码块；块内改语言，点正文还原；Ctrl+Z 撤销。标题发布时生成目录；视频最多 25 MiB</span>
               </div>
 
               <div class="stack" style="gap:6px">

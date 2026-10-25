@@ -298,6 +298,7 @@ input:focus, textarea:focus, select:focus {
   box-shadow: 0 0 0 3px #2d7d461f;
 }
 textarea { resize: vertical; line-height: 1.75; }
+.code-language { padding: 4px 9px; font-size: var(--fs-xs); max-width: 155px; }
 label.field { display: flex; flex-direction: column; gap: 5px; }
 label.field > span {
   font-family: "IBM Plex Mono", monospace;

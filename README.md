@@ -35,6 +35,14 @@ Markdown 文件对接。
 桌面目录在正文右侧，手机在正文前；单纯加粗不会进入目录。代码围栏与缩进代码保持原样。
 安装版需要重新构建更新，重开旧版 exe 不会自动读取源码中的界面改动。
 
+正文工具栏的「代码块」会把选中的行合成一个代码块，保留代码的缩进与空行；
+没有选中内容时插入空块，光标停在块内。语言默认 Python，可选择 JavaScript、TypeScript、
+JSON、Bash 或纯文本。在已有代码块内再次点击不会重复包裹；把光标放入块内后选择语言，
+只修改该块的语言，已有围栏和附加信息保留。点击「正文」可去掉当前块的围栏，恢复普通段落。
+格式操作支持 `Ctrl+Z` 撤销、`Ctrl+Y` 重做，也保留此前输入的撤销记录；输入法组词期间请先完成组词。
+反引号围栏、波浪围栏与源码编辑兼容；代码包含反引号时自动使用更长围栏，预览也能正确显示。
+选区跨越代码边界、未闭合围栏，以及引用或列表中的复杂围栏会提示并保持原文，请改用源码调整。
+
 文章使用「插入视频」，说说使用「上传视频」。支持 MP4 / WebM（每个不超过 25 MiB），
 MP4 推荐 H.264 + AAC。填写说明后保存，再去发布。原件存入博客的 `content/videos/`，
 按 SHA-256 去重；仅公开页面引用的视频会随博客构建导出，草稿与未引用原件不会上线。
@@ -172,7 +180,7 @@ python _mutate_t5.py
 
 发布与同步回归使用真实临时 Git 仓库和本地裸远端，不连接 GitHub：
 `python -m unittest _test_publish_safety _test_publish_snapshot _test_videos`。
-界面启动与编辑保护：`node --test _test_heading_format.cjs _test_save_context.cjs _test_sync_client.cjs`。
+界面启动与编辑保护：`node --test _test_code_block.cjs _test_heading_format.cjs _test_save_context.cjs _test_sync_client.cjs`。
 请使用已安装 Pillow、PyYAML 的应用构建虚拟环境；临时目录可通过 `TEMP`/`TMP` 指定到本次独立 `work` 目录。
 
 变异验证的意义：只有"把代码改坏、测试确实变红"才能证明那条测试真的在守这个

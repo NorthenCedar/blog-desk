@@ -265,15 +265,54 @@
     ta.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
-  function formatBodyBlock(body, start, end, level) {
-    const lines = [];
-    for (const match of body.matchAll(/([^\r\n]*)(\r?\n|$)/g)) {
-      if (!match[0] && match.index < body.length) continue;
-      if (!match[0] && body && !body.endsWith('\n')) continue;
-      lines.push({ text:match[1], newline:match[2], offset:match.index });
-    }
+  function formatBodyBlock(body, start, end, level, language = 'python') {
+    const { lines, blocks } = bodyCodeBlocks(body);
     const first = Math.max(0, lines.findLastIndex(line => line.offset <= start));
     const last = Math.max(first, lines.findLastIndex(line => line.offset < end || line.offset <= start));
+    if (level === 'code' || level === 'language' || level === 0) {
+      const hits = blocks.filter(block => block.first <= last && block.last >= first);
+      const block = hits[0];
+      const unchanged = { body, start, end };
+      if (block) {
+        if (hits.length !== 1 || first < block.first || last > block.last) {
+          return { ...unchanged, error:'选区跨越了代码块边界，请只选择一个完整代码块或块内代码。' };
+        }
+        if (block.nested || !block.closed) {
+          return { ...unchanged, error:'引用、列表、缩进中的围栏或未闭合代码块请在源码中调整，当前内容已保留。' };
+        }
+        const open = lines[block.first], close = lines[block.last];
+        if (level === 'code') return unchanged;
+        if (level === 'language') {
+          if (!/^(python|javascript|typescript|json|bash|text)$/.test(language)) return unchanged;
+          const head = /^( {0,3})(`{3,}|~{3,})([ \t]*)([^ \t]*)(.*)$/.exec(open.text);
+          const replacement = head[1] + head[2] + head[3] + language + head[5];
+          const after = open.offset + open.text.length;
+          const delta = replacement.length - open.text.length;
+          const move = pos => pos >= after ? pos + delta : Math.min(pos, open.offset + replacement.length);
+          return { body:body.slice(0, open.offset) + replacement + body.slice(after), start:move(start), end:move(end) };
+        }
+        const contentStart = open.offset + open.text.length + open.newline.length;
+        // 最后一个换行分隔正文与关闭围栏；块外的换行始终原样保留。
+        const content = body.slice(contentStart, close.offset).replace(/\r?\n$/, '');
+        const move = pos => open.offset + Math.max(0, Math.min(content.length, pos - contentStart));
+        return { body:body.slice(0, open.offset) + content + body.slice(close.offset + close.text.length), start:move(start), end:move(end) };
+      }
+      if (level === 'language') return unchanged;
+      if (level === 'code') {
+        const newline = lines[first].newline || lines.find(line => line.newline)?.newline || '\n';
+        const s = start === end ? start : lines[first].offset;
+        const e = start === end ? end : lines[last].offset + lines[last].text.length;
+        const content = body.slice(s, e);
+        const longest = Array.from(content.matchAll(/`+/g)).reduce((length, match) => Math.max(length, match[0].length), 0);
+        const fence = '`'.repeat(Math.max(3, longest + 1));
+        const lang = /^(python|javascript|typescript|json|bash|text)$/.test(language) ? language : 'python';
+        const lead = s > 0 && body[s - 1] !== '\n' ? newline : '';
+        const tail = e < body.length && body[e] !== '\r' && body[e] !== '\n' ? newline : '';
+        const prefix = lead + fence + lang + newline;
+        const replacement = prefix + content + newline + fence + tail;
+        return { body:body.slice(0, s) + replacement + body.slice(e), start:s + prefix.length, end:s + prefix.length + content.length };
+      }
+    }
     let fence = null;
     const output = lines.map((line, index) => {
       // 只为识别代码边界剥去容器前缀，输出始终保留原行。
@@ -298,6 +337,61 @@
     return { body:result, start:before, end:output.slice(0, last+1).join('').length - lines[last].newline.length };
   }
 
+  // 同一份边界信息用于代码操作与预览；容器内的代码只识别并保护，不改其源码。
+  function bodyCodeBlocks(body) {
+    const lines = [];
+    for (const match of body.matchAll(/([^\r\n]*)(\r?\n|$)/g)) {
+      if (!match[0] && body && !body.endsWith('\n')) continue;
+      lines.push({ text:match[1], newline:match[2], offset:match.index });
+    }
+    const blocks = [];
+    let block = null;
+    let listIndent = null;
+    let listBlank = false;
+    for (const [index, line] of lines.entries()) {
+      const probe = line.text.replace(/^(?: {0,3}>[ \t]?)+/, '').replace(/^\s*(?:[-+*]|\d+[.)])[ \t]+/, '');
+      const marker = /^(\s*)(`{3,}|~{3,})(.*)$/.exec(block?.nested ? probe : line.text);
+      if (block) {
+        if (marker && (block.nested || marker[1].length <= 3) && marker[2][0] === block.marker[0] && marker[2].length >= block.marker.length && !marker[3].trim()) {
+          block.last = index; block.closed = true; block = null;
+        }
+        continue;
+      }
+      const list = /^( *)(?:[-+*]|\d+[.)])[ \t]+/.exec(line.text);
+      if (list) { listIndent = list[0].length; listBlank = false; }
+      else if (!line.text.trim()) listBlank = true;
+      else if (listIndent !== null) {
+        // 无空行的普通文字可能仍是列表的懒延续；不能因此把后续围栏误当顶层。
+        if (/^ */.exec(line.text)[0].length < listIndent && (listBlank || /^(?:#{1,6}\s|>|`{3,}|~{3,}|[-*_]{3,})/.test(line.text))) listIndent = null;
+        listBlank = false;
+      }
+      const opening = /^(\s*)(`{3,}|~{3,})(.*)$/.exec(probe);
+      if (!opening || (opening[2][0] === '`' && opening[3].includes('`'))) continue;
+      block = { first:index, last:lines.length - 1, marker:opening[2], closed:false,
+        nested:probe !== line.text || listIndent !== null || !/^ {0,3}(`{3,}|~{3,})/.test(line.text),
+        language:opening[3].trim().split(/[ \t]/)[0] };
+      blocks.push(block);
+    }
+    return { lines, blocks };
+  }
+
+  function applyBodyEdit(body, result) {
+    if (result.error) { toast(result.error, true); return; }
+    body.focus();
+    if (body.value !== result.body) {
+      // 只替换变化范围，通过 Chromium/WebView2 的编辑事务保留输入与格式操作的撤销历史。
+      const before = body.value;
+      let first = 0, oldEnd = before.length, newEnd = result.body.length;
+      while (first < oldEnd && first < newEnd && before[first] === result.body[first]) first++;
+      while (oldEnd > first && newEnd > first && before[oldEnd - 1] === result.body[newEnd - 1]) { oldEnd--; newEnd--; }
+      body.setSelectionRange(first, oldEnd);
+      let inserted = false;
+      try { inserted = document.execCommand('insertText', false, result.body.slice(first, newEnd)); } catch { /* 保留原内容与撤销记录 */ }
+      if (!inserted) { toast('当前编辑器无法执行可撤销的格式操作，请使用源码编辑。', true); return; }
+    }
+    body.setSelectionRange(result.start, result.end);
+  }
+
   /* ══════════════════ 四、迷你 Markdown ══════════════════
      只覆盖站上文章真正会用的语法；**不求全**，求可预期。
      图片路径：正文写 `![](./名字.jpg)`（相对文章目录）⇒ 换成 /api/file?path=<绝对路径>。
@@ -313,10 +407,13 @@
     // ★ 抽取顺序有讲究：围栏代码 → 行内代码 → 图片 → 链接。
     //   图片必须排在链接前面，否则链接规则会先吃掉 `![alt](url)` 的尾巴。
     //   全都抽成 \u0000XXn\u0000 占位符 —— 这种字符不含 HTML 特殊字符，转义后仍然在。
-    s = s.replace(/```[ \t]*[^\n`]*\n([\s\S]*?)```/g, (_m, code) => {
-      fences.push(code.replace(/\n$/, ''));
-      return `\n\u0000F${fences.length - 1}\u0000\n`;
-    });
+    const codeBlocks = bodyCodeBlocks(s);
+    for (const block of codeBlocks.blocks.slice().reverse()) {
+      if (block.nested || !block.closed) continue;
+      const open = codeBlocks.lines[block.first], close = codeBlocks.lines[block.last];
+      fences.push(s.slice(open.offset + open.text.length + open.newline.length, close.offset).replace(/\n$/, ''));
+      s = s.slice(0, open.offset) + `\n\u0000F${fences.length - 1}\u0000\n` + s.slice(close.offset + close.text.length);
+    }
     s = s.replace(/`([^`\n]+)`/g, (_m, code) => {
       inlines.push(code);
       return `\u0000I${inlines.length - 1}\u0000`;
@@ -1135,15 +1232,43 @@
   }
 
   function initWrite() {
+    const body = $('#f-body'), language = $('#code-language');
+    let composing = false;
+    const ready = () => {
+      if (composing) { toast('请先完成输入法组词，再设置格式。'); return false; }
+      return true;
+    };
+    const syncLanguage = () => {
+      const { lines, blocks } = bodyCodeBlocks(body.value);
+      const first = lines.findLastIndex(line => line.offset <= body.selectionStart);
+      const last = lines.findLastIndex(line => line.offset < body.selectionEnd || line.offset <= body.selectionStart);
+      const block = blocks.find(block => !block.nested && block.first <= first && block.last >= last);
+      const original = $('#code-language-original');
+      if (block && !/^(python|javascript|typescript|json|bash|text)$/.test(block.language)) {
+        original.textContent = `原语言（${block.language || '未指定'}）`;
+        original.hidden = false; language.value = '';
+      } else {
+        original.hidden = true;
+        if (block) language.value = block.language;
+        else if (!language.value) language.value = 'python';
+      }
+    };
+    const applyFormat = level => {
+      if (!ready()) return;
+      applyBodyEdit(body, formatBodyBlock(body.value, body.selectionStart, body.selectionEnd, level, language.value));
+      syncLanguage();
+    };
+    body.addEventListener('compositionstart', () => { composing = true; });
+    body.addEventListener('compositionend', () => { composing = false; syncLanguage(); });
+    for (const event of ['select', 'click', 'keyup']) body.addEventListener(event, syncLanguage);
     $$('[data-body-level]').forEach(button => {
       button.addEventListener('mousedown', event => event.preventDefault());
-      button.addEventListener('click', () => {
-        const body = $('#f-body');
-        const result = formatBodyBlock(body.value, body.selectionStart, body.selectionEnd, Number(button.dataset.bodyLevel));
-        body.value = result.body; body.focus(); body.setSelectionRange(result.start, result.end);
-        body.dispatchEvent(new Event('input', { bubbles:true }));
-      });
+      button.addEventListener('click', () => applyFormat(Number(button.dataset.bodyLevel)));
     });
+    $('#btn-code-block').addEventListener('mousedown', event => event.preventDefault());
+    $('#btn-code-block').addEventListener('click', () => applyFormat('code'));
+    language.addEventListener('mousedown', event => { if (!ready()) event.preventDefault(); });
+    language.addEventListener('change', () => applyFormat('language'));
     $('#btn-insert-video').addEventListener('click', guard($('#btn-insert-video'), () => uploadOwnerVideo('post')));
     $('#btn-new-post').addEventListener('click', () => newPost());
     $('#btn-refresh-posts').addEventListener('click', async () => {
