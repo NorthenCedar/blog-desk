@@ -130,6 +130,180 @@ class PublishSafetyTests(unittest.TestCase):
         self.assertEqual((self.work / "content/posts/one/index.md").read_text(), "desk dirty\n")
         self.assertFalse((self.work / ".git/rebase-merge").exists())
 
+    def advance_remote(self):
+        other = self.clone('cloud')
+        self.write('content/cloud.md', '云端已经发布的内容\n', other)
+        remote = self.commit('云端更新', other)
+        self.run_git(other, 'push', 'origin', 'main')
+        return remote
+
+    def sync_clean(self):
+        sync = getattr(gitops, 'sync_clean', None)
+        self.assertTrue(callable(sync), '写作台需要只同步干净工作区的安全快进入口')
+        return sync(self.work)
+
+    def test_remote_ahead_status_is_distinct_and_remains_read_only(self):
+        remote = self.advance_remote()
+        state = gitops.status(self.work)
+        self.assertEqual(state['sync'], 'behind', '单纯落后不能冒充分叉')
+        self.assertEqual(state['incoming'], 1)
+        self.assertEqual(state['remote_sha'], remote)
+        self.assertEqual(self.head(), self.initial, '读取状态不能偷偷同步')
+        self.assertFalse((self.work / 'content/cloud.md').exists())
+
+    def test_clean_remote_ahead_syncs_exact_commit_without_publishing(self):
+        remote = self.advance_remote()
+        result = self.sync_clean()
+        self.assertTrue(result['updated'])
+        self.assertEqual(result['head'], remote)
+        self.assertEqual(self.head(), remote)
+        self.assertEqual(self.remote_head(), remote, '同步不能产生或推送新提交')
+        self.assertEqual((self.work / 'content/cloud.md').read_text(encoding='utf-8'),
+                         '云端已经发布的内容\n')
+        self.assertEqual(self.run_git(self.work, 'rev-parse', 'HEAD^').stdout.strip(), self.initial)
+        self.assertEqual(self.run_git(self.work, 'status', '--porcelain').stdout, '')
+
+    def test_sync_preserves_dirty_worktree_and_staging_even_with_autostash_enabled(self):
+        remote = self.advance_remote()
+        self.run_git(self.work, 'config', 'merge.autostash', 'true')
+        self.write('content/posts/one/index.md', '本地未完成的内容\n')
+        self.run_git(self.work, 'add', 'content/posts/one/index.md')
+        self.write('content/untracked.md', '本地未跟踪草稿\n')
+        before = gitops.capture_publish_state(self.work)
+        result = self.sync_clean()
+        self.assertFalse(result['updated'])
+        self.assertEqual(result['reason'], 'local_changes')
+        self.assertEqual(gitops.capture_publish_state(self.work), before)
+        self.assertEqual(self.remote_head(), remote)
+        self.assertEqual(self.run_git(self.work, 'stash', 'list').stdout, '')
+
+    def test_sync_preserves_both_diverged_histories(self):
+        remote = self.advance_remote()
+        self.write('content/local.md', '本机已有提交\n')
+        local = self.commit('本机更新')
+        result = self.sync_clean()
+        self.assertFalse(result['updated'])
+        self.assertEqual(result['reason'], 'diverged')
+        self.assertEqual(self.head(), local)
+        self.assertEqual(self.remote_head(), remote)
+        self.assertFalse((self.work / 'content/cloud.md').exists())
+
+    def test_sync_never_publishes_local_ahead_commits(self):
+        self.write('content/local.md', '本机待发布\n')
+        local = self.commit('本机待发布提交')
+        result = self.sync_clean()
+        self.assertFalse(result['updated'])
+        self.assertEqual(result['reason'], 'ahead')
+        self.assertEqual(self.head(), local)
+        self.assertEqual(self.remote_head(), self.initial)
+
+    def test_sync_does_not_move_non_main_branch_or_pending_git_operation(self):
+        self.advance_remote()
+        self.run_git(self.work, 'switch', '-c', 'ai-feature')
+        self.assertEqual(self.sync_clean()['reason'], 'non_main')
+        self.assertEqual(self.head(), self.initial)
+        self.run_git(self.work, 'switch', 'main')
+        (self.work / '.git/rebase-merge').mkdir()
+        self.assertEqual(self.sync_clean()['reason'], 'in_progress')
+        self.assertEqual(self.head(), self.initial)
+
+    def test_sync_fetch_failure_keeps_local_files_and_history(self):
+        self.advance_remote()
+        before = gitops.capture_publish_state(self.work)
+        with mock.patch.object(gitops, '_network_git', side_effect=gitops.GitError('fetch 失败')):
+            with self.assertRaisesRegex(gitops.GitError, 'fetch 失败'):
+                self.sync_clean()
+        self.assertEqual(gitops.capture_publish_state(self.work), before)
+
+    def test_sync_rechecks_files_changed_during_fetch(self):
+        self.advance_remote()
+        real_fetch = gitops._fetch_main
+
+        def edit_during_fetch(repo):
+            result = real_fetch(repo)
+            self.write('content/posts/one/index.md', '另一个工具刚保存的内容\n')
+            return result
+
+        with mock.patch.object(gitops, '_fetch_main', side_effect=edit_during_fetch):
+            with self.assertRaisesRegex(gitops.GitError, '变化'):
+                self.sync_clean()
+        self.assertEqual(self.head(), self.initial)
+        self.assertEqual((self.work / 'content/posts/one/index.md').read_text(encoding='utf-8'),
+                         '另一个工具刚保存的内容\n')
+
+    def test_sync_uses_checked_commit_even_if_tracking_ref_changes_at_merge(self):
+        remote = self.advance_remote()
+        real_run = gitops.proc.run
+
+        def move_tracking_ref(args, **kwargs):
+            if 'merge' in args:
+                self.run_git(self.work, 'update-ref', 'refs/remotes/origin/main', self.initial)
+            return real_run(args, **kwargs)
+
+        with mock.patch.object(gitops.proc, 'run', side_effect=move_tracking_ref):
+            self.sync_clean()
+        self.assertEqual(self.head(), remote)
+        self.assertEqual(self.remote_head(), remote)
+
+    def test_sync_does_not_autostash_a_last_moment_edit(self):
+        other = self.clone('cloud')
+        self.write('content/posts/one/index.md', '云端修改同一文件\n', other)
+        remote = self.commit('云端修改', other)
+        self.run_git(other, 'push', 'origin', 'main')
+        self.run_git(self.work, 'config', 'merge.autostash', 'true')
+        real_run = gitops.proc.run
+
+        def edit_at_merge(args, **kwargs):
+            if 'merge' in args:
+                self.write('content/posts/one/index.md', '合并前一刻的本地输入\n')
+            return real_run(args, **kwargs)
+
+        with mock.patch.object(gitops.proc, 'run', side_effect=edit_at_merge):
+            with self.assertRaises(gitops.GitError):
+                self.sync_clean()
+        self.assertEqual(self.head(), self.initial)
+        self.assertEqual(self.remote_head(), remote)
+        self.assertEqual((self.work / 'content/posts/one/index.md').read_text(encoding='utf-8'),
+                         '合并前一刻的本地输入\n')
+        self.assertEqual(self.run_git(self.work, 'stash', 'list').stdout, '')
+
+    def test_sync_refuses_an_unexpected_repository(self):
+        self.run_git(self.work, 'remote', 'set-url', 'origin', str(self.root / 'other.git'))
+        with self.assertRaisesRegex(gitops.GitError, 'origin'):
+            self.sync_clean()
+        self.assertEqual(self.head(), self.initial)
+
+    def test_sync_never_overwrites_an_ignored_local_draft(self):
+        remote = self.advance_remote()
+        self.write('content/cloud.md', '被忽略但仍然重要的本地草稿\n')
+        exclude = self.work / '.git/info/exclude'
+        exclude.write_text(exclude.read_text() + '\ncontent/cloud.md\n')
+        self.assertEqual(self.run_git(self.work, 'status', '--porcelain').stdout, '')
+        with self.assertRaises(gitops.GitError):
+            self.sync_clean()
+        self.assertEqual(self.head(), self.initial)
+        self.assertEqual(self.remote_head(), remote)
+        self.assertEqual((self.work / 'content/cloud.md').read_text(encoding='utf-8'),
+                         '被忽略但仍然重要的本地草稿\n')
+
+    def test_sync_http_endpoint_receives_remote_content_without_publishing(self):
+        import json
+        import urllib.request
+        from server import serve
+        remote = self.advance_remote()
+        httpd, port, app = serve(self.work, {})
+        try:
+            request = urllib.request.Request(f'http://127.0.0.1:{port}/api/sync',
+                                             data=b'{}', headers={'Content-Type': 'application/json'})
+            with urllib.request.urlopen(request, timeout=30) as response:
+                result = json.load(response)
+            self.assertTrue(result['updated'])
+            self.assertEqual(self.head(), remote)
+            self.assertEqual(self.remote_head(), remote)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
     def test_divergence_is_rejected_without_replaying_local_commits(self):
         other = self.clone("other")
         self.write("content/local.md", "local\n")

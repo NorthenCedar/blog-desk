@@ -1837,9 +1837,12 @@
     } else if (sync === 'ahead') {
       dot.className = 'dot warn';
       $('#st-remote').textContent = `远端 ${st.remote_short}｜本地多 ${st.pending} 个提交待推`;
+    } else if (sync === 'behind') {
+      dot.className = 'dot warn';
+      $('#st-remote').textContent = `云端有 ${st.incoming} 个新提交，可到发布页同步`;
     } else if (sync === 'diverged') {
       dot.className = 'dot err';
-      $('#st-remote').textContent = '远端有你没有的改动 —— 先别推';
+      $('#st-remote').textContent = '本地与云端都有新提交，需要合并';
     } else {
       dot.className = 'dot warn';
       $('#st-remote').textContent = '远端状态没问到' + (st.remote_err ? '（' + String(st.remote_err).slice(0, 28) + '）' : '');
@@ -1850,14 +1853,18 @@
     await refreshState();
     const box = $('#pub-state');
     const st = S.state;
+    $('#btn-sync-remote').disabled = !st || !st.clean || st.branch !== 'main' || st.sync !== 'behind';
     if (!st) {
       box.innerHTML = '<div class="empty">读不到仓库状态。</div>';
       return;
     }
     const syncText = {
-      synced: ['ok', `与远端内容一致（远端 ${st.remote_short}）`],
+      synced: ['ok', `与远端提交一致（远端 ${st.remote_short}）`],
       ahead: ['warn', `本地比远端多 ${st.pending} 个提交 —— 推了才上线`],
-      diverged: ['err', '远端有你本机没有的改动 —— 先处理，别覆盖'],
+      behind: ['warn', st.clean
+        ? `云端比本机多 ${st.incoming} 个提交，点击“同步云端内容”即可接收`
+        : `云端比本机多 ${st.incoming} 个提交；本地有未提交改动，处理后再同步`],
+      diverged: ['err', '本地与云端都有新提交，需要合并；两边内容均已保留'],
     }[st.sync] || ['warn', '远端状态没问到' + (st.remote_err ? '：' + st.remote_err : '')];
     const color = { ok: 'var(--accent-ink)', warn: 'var(--warn)', err: 'var(--danger)' }[syncText[0]];
     box.innerHTML =
@@ -1870,7 +1877,7 @@
        <div class="row"><span class="hint" style="min-width:78px">远端 main</span>
          <span style="color:${color}">${esc(syncText[1])}</span></div>
        <div class="row"><span class="hint" style="min-width:78px">说明</span>
-         <span class="hint">使用普通 Git 推送，保留本地提交历史；远端更新或工作区混入源码改动时会暂停发布。</span></div>`;
+         <span class="hint">启动时会同步干净且仅落后的 main。同步只接收已发布内容；本地有改动或历史分叉时保留现场，发布前仍会检查。</span></div>`;
     renderDiff(st);
     if (!$('#pub-msg').value.trim()) {
       $('#pub-msg').value = `写作台：内容更新（${stamp()}）`;
@@ -1979,6 +1986,7 @@
   }
 
   function initPublish() {
+    $('#btn-sync-remote').addEventListener('click', () => syncRemote());
     $('#btn-refresh-state').addEventListener('click', () => loadPublish().then(() => toast('刷新了')).catch((e) => toast(e.message, true)));
     $('#btn-push').addEventListener('click', async () => {
       const skip = $('#pub-skip').checked;
@@ -1991,6 +1999,36 @@
       runPush(skip);
     });
     $('#btn-commit-only').addEventListener('click', () => commitOnly());
+  }
+
+  async function syncRemote() {
+    const buttons = ['#btn-sync-remote', '#btn-push', '#btn-commit-only'];
+    const main = $('main.work');
+    const nav = $('#nav');
+    const previous = [main.inert, nav.inert];
+    main.inert = true;
+    nav.inert = true;
+    buttons.forEach((selector) => { $(selector).disabled = true; });
+    try {
+      const result = await POST('/api/sync');
+      if (result.updated) {
+        try {
+          await loadTags();
+        } catch (e) {
+          S.tags = [];
+          toast('内容已同步，但最新标签读取失败；重新打开写作台后再编辑：' + e.message, true);
+          return;
+        }
+      }
+      toast(result.message, !result.updated && ['diverged', 'local_changes', 'in_progress'].includes(result.reason));
+    } catch (e) {
+      toast('同步未完成：' + e.message, true);
+    } finally {
+      buttons.forEach((selector) => { $(selector).disabled = false; });
+      // 保留编辑框与版本；下次保存仍由既有的版本检查保护未保存内容。
+      try { await loadPublish(); }
+      finally { [main.inert, nav.inert] = previous; }
+    }
   }
 
   /* ══════════════════ 十三、快捷入口 ══════════════════ */
@@ -2138,16 +2176,30 @@
     initSettings();
     $$('#nav button').forEach((b) => b.addEventListener('click', () => go(b.dataset.view)));
 
+    $('main.work').inert = true;
+    $('#nav').inert = true;
     try {
-      S.cfg = Object.assign(S.cfg, await GET('/api/config'));
-    } catch { /* 配置读不到也继续 */ }
+      try {
+        S.cfg = Object.assign(S.cfg, await GET('/api/config'));
+      } catch { /* 配置读不到也继续 */ }
 
-    try { await loadTags(); } catch (e) { toast('读标签注册表失败：' + e.message, true); }
-    try { await refreshState(); } catch { /* 已由 refreshState 内部兜住 */ }
+      // 只在初次读取内容前自动同步；后台状态刷新保持只读，写作中不自动移动文件。
+      try {
+        const result = await POST('/api/sync');
+        if (result.updated) toast(result.message);
+      } catch (e) {
+        toast('暂未同步云端，当前仍可编辑本地内容：' + e.message, true);
+      }
+      try { await loadTags(); } catch (e) { toast('读标签注册表失败：' + e.message, true); }
+      try { await refreshState(); } catch { /* 已由 refreshState 内部兜住 */ }
 
-    const start = (location.hash || '').slice(1);
-    go(VIEWS[start] ? start : 'write');
-    await loadPosts().catch((e) => toast(e.message, true));
+      const start = (location.hash || '').slice(1);
+      go(VIEWS[start] ? start : 'write');
+      await loadPosts().catch((e) => toast(e.message, true));
+    } finally {
+      $('main.work').inert = false;
+      $('#nav').inert = false;
+    }
 
     // ★ 启动完毕的**显式信号**：界面测试（`_t8.py` 等）靠它决定「可以点了」。
     //   为什么不靠"某个元素出现了"：`#nav button` 之类是 index.html 里的**静态** HTML，

@@ -25,6 +25,7 @@
   POST /api/tags/delete      → 删一个标签（正被文章用的会被拒）
   GET  /api/tree             → content/ 目录树（快捷入口用）
   POST /api/commit           → 只提交不推
+  POST /api/sync             → 仅在工作区干净时快进接收云端内容
   POST /api/push             → 一键推送（构建 + 校验 + 提交 + 推）
   GET  /api/comments         → 线上留言（需管理密钥）
   POST /api/comment/delete   → 删一条线上留言
@@ -380,6 +381,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = self._body()
             c = self.app.content
+
+            if u.path == "/api/sync":
+                return self._json(gitops.sync_clean(self.app.repo))
 
             if u.path == "/api/post":
                 slug = body.get("slug", "").strip()

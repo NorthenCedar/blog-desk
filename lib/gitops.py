@@ -2,8 +2,8 @@
 """写作台 · Git 与推送。
 
 发布走普通、非强制 Git push，保留 AI 与写作台的真实提交历史。
-fetch 只更新远端跟踪引用；远端领先或分叉就停下，由用户同步，绝不自动
-stash、rebase 或 reset。提交只处理写作台内容路径，其他工作区或暂存区改动
+状态查询只更新远端跟踪引用；显式同步仅允许干净 main 快进。发布前仍会拦住
+远端领先或分叉，绝不自动 stash、rebase 或 reset。提交只处理写作台内容路径，其他工作区或暂存区改动
 会阻断发布。Windows 系统代理在每次网络命令前读取，只通过命令级 -c 使用。
 
 旧版 API/blob 与历史对齐工具保留供旧测试使用，发布入口不再调用它们。
@@ -221,8 +221,9 @@ def status(repo: Path) -> dict:
         "remote_sha": "",
         "remote_short": "",
         "remote_err": "",
-        "sync": None,          # synced / ahead / diverged；None = 没问到
+        "sync": None,          # synced / ahead / behind / diverged；None = 没问到
         "pending": None,       # 本地待推的提交数（sync=ahead 时有值）
+        "incoming": None,      # 云端多出的提交数（sync=behind 时有值）
         "marker": read_marker(repo),   # 上次推送记下的远端 sha（离线时的参考）
     }
     try:
@@ -230,8 +231,10 @@ def status(repo: Path) -> dict:
         out.update({
             "remote_sha": c["remote_sha"],
             "remote_short": c["remote_sha"][:8],
-            "sync": c["mode"],
+            "sync": "behind" if c["relation"] == "behind" else c["mode"],
             "pending": c["pending"],
+            "incoming": int(git(repo, "rev-list", "--count", f"{c['head']}..{c['remote_sha']}"))
+                        if c["relation"] == "behind" else 0,
         })
     except Exception as e:  # noqa: BLE001
         out["remote_err"] = str(e)
@@ -326,6 +329,41 @@ def _require_same_head(repo: Path, head: str) -> None:
     if (git(repo, "rev-parse", "HEAD") != head
             or git(repo, "symbolic-ref", "--quiet", "--short", "HEAD", check=False) != "main"):
         raise GitError("检查期间本地 HEAD 或分支已变化，请等待 AI/Git 操作结束后再发布。")
+
+
+def sync_clean(repo: Path) -> dict:
+    """接收已发布内容；仅干净 main 快进到本次核对的提交，不提交、不推送。"""
+    repo = Path(repo)
+    before = capture_publish_state(repo)
+    result = {"ok": True, "updated": False, "head": before["head"]}
+    if before["branch"] != "main":
+        return dict(result, reason="non_main", message="当前不在 main，保留当前分支，没有同步。")
+    for name in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply"):
+        path = Path(git(repo, "rev-parse", "--git-path", name))
+        if (path if path.is_absolute() else repo / path).exists():
+            return dict(result, reason="in_progress", message="仓库正在合并或整理提交，完成后再同步。")
+    if before["status"]:
+        return dict(result, reason="local_changes", message="本地有未提交改动，已保留；处理后再同步云端内容。")
+    origin = git(repo, "remote", "get-url", "origin", check=False)
+    if REPO not in origin.replace("\\", "/"):
+        raise GitError(f"这个仓库的 origin 不是 {REPO}，已拒绝同步；请检查仓库路径。")
+    comparison = compare(repo)
+    if capture_publish_state(repo) != before:
+        raise GitError("同步检查期间文件、暂存区或 HEAD 已变化，已停止；请等待其他操作完成后重试。")
+    relation = comparison["relation"]
+    if relation != "behind":
+        messages = {"same": "本地与云端已同步。", "ahead": "本地有待发布提交，没有需要接收的云端内容。",
+                    "diverged": "本地与云端都有新提交，需要合并；两边内容均已保留。"}
+        return dict(result, reason=relation, message=messages[relation])
+    target = comparison["remote_sha"]
+    # 固定 SHA，禁止仓库级 autostash；Git 自身仍会拒绝覆盖临近合并时出现的文件改动。
+    git(repo, "-c", "merge.autostash=false", "merge", "--ff-only", "--no-autostash",
+        "--no-overwrite-ignore", target)
+    after = capture_publish_state(repo)
+    if after["branch"] != "main" or after["head"] != target or after["status"]:
+        raise GitError("同步期间仓库又有变化，已保留当前内容；请刷新检查，不会自动回退或覆盖。")
+    return {"ok": True, "updated": True, "head": target, "reason": "synced",
+            "message": f"已同步云端内容（{before['head'][:8]} → {target[:8]}）。"}
 
 
 def preflight(repo: Path) -> dict:

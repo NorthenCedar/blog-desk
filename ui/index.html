@@ -180,7 +180,10 @@
         <div class="card">
           <div class="spread">
             <h3>仓库状态</h3>
-            <button class="btn sm" id="btn-refresh-state">刷新</button>
+            <div class="row tight">
+              <button class="btn sm" id="btn-sync-remote" disabled>同步云端内容</button>
+              <button class="btn sm" id="btn-refresh-state">刷新</button>
+            </div>
           </div>
           <div id="pub-state" class="stack" style="gap:var(--sp-3)"></div>
         </div>
