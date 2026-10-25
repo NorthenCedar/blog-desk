@@ -313,16 +313,9 @@
         return { body:body.slice(0, s) + replacement + body.slice(e), start:s + prefix.length, end:s + prefix.length + content.length };
       }
     }
-    let fence = null;
     const output = lines.map((line, index) => {
-      // 只为识别代码边界剥去容器前缀，输出始终保留原行。
-      const probe = line.text.replace(/^(?: {0,3}>[ \t]?)+/, '').replace(/^\s*(?:[-+*]|\d+[.)])[ \t]+/, '');
-      const marker = /^\s*(`{3,}|~{3,})(.*)$/.exec(probe);
-      const inCode = !!fence || !!marker || /^(?: {4}|\t)/.test(line.text);
-      if (marker) {
-        if (!fence) fence = marker[1];
-        else if (marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = null;
-      }
+      // 标题、代码操作与预览共用代码边界，避免各自对 TAB 或 Unicode 空白作不同判断。
+      const inCode = blocks.some(block => index >= block.first && index <= block.last) || /^(?: {4}|\t)/.test(line.text);
       if (index < first || index > last || inCode || (!line.text.trim() && start !== end) || /^\s*</.test(line.text)) return line.text + line.newline;
       const text = line.text.replace(/^ {0,3}#{1,6}(?:[ \t]+|$)/, '');
       return (level ? '#'.repeat(level) + ' ' : '') + text + line.newline;
@@ -352,7 +345,7 @@
       const probe = line.text.replace(/^(?: {0,3}>[ \t]?)+/, '').replace(/^\s*(?:[-+*]|\d+[.)])[ \t]+/, '');
       const marker = /^(\s*)(`{3,}|~{3,})(.*)$/.exec(block?.nested ? probe : line.text);
       if (block) {
-        if (marker && (block.nested || marker[1].length <= 3) && marker[2][0] === block.marker[0] && marker[2].length >= block.marker.length && !marker[3].trim()) {
+        if (marker && (block.nested || /^ {0,3}$/.test(marker[1])) && marker[2][0] === block.marker[0] && marker[2].length >= block.marker.length && /^[ \t]*$/.test(marker[3])) {
           block.last = index; block.closed = true; block = null;
         }
         continue;

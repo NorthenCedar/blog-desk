@@ -41,6 +41,22 @@ test('已有长反引号与波浪围栏不嵌套，点击不会重写语言或�
     }
   }
 });
+test('真实边界识别只接受顶层关闭围栏前的零到三个 ASCII 空格及尾部空格或 TAB',()=>{
+  for(const [marker,last] of [['\t```',4],[' \t```',4],['```\u00a0',4],['\u00a0```',4],['    ```',4],['``` \t',2],['   ```\t ',2]]) {
+    const body='```markdown\nfirst\n'+marker+'\nafter\n```';
+    const block=context.bodyCodeBlocks(body).blocks[0];
+    assert.equal(block.last,last,JSON.stringify(marker)); assert.equal(block.closed,true);
+  }
+});
+test('伪关闭围栏不会使正文还原遗留尾围栏、代码块套层或标题修改块内内容',()=>{
+  for(const marker of ['\t```','```\u00a0','\u00a0```']) {
+    const body='```markdown\nfirst\n'+marker+'\nafter\n```';
+    const first=body.indexOf('first'),after=body.indexOf('after');
+    assert.equal(format(body,first,first,0).body,'first\n'+marker+'\nafter');
+    assert.equal(format(body,after,after).body,body);
+    assert.equal(format(body+'\n正文',0,body.length+3,2).body,body+'\n## 正文');
+  }
+});
 test('代码中含三个或更多反引号时使用更长围栏',()=>{
   const code='const sample = "``` and `````";\n  sample;';
   assert.equal(format(code,0,code.length,'code','javascript').body,'``````javascript\nconst sample = "``` and `````";\n  sample;\n``````');
@@ -102,6 +118,12 @@ vm.runInContext(source.slice(renderStart,renderEnd)+'\nthis.render=renderMd;',co
 test('预览保留长围栏内的三个反引号，波浪围栏不变成普通段落',()=>{
   assert.equal(context.render('````python\nx = "```"\n````'),'<pre><code>x = &quot;```&quot;</code></pre>');
   assert.equal(context.render('~~~json\n{"a": 1}\n~~~'),'<pre><code>{&quot;a&quot;: 1}</code></pre>');
+});
+test('预览中的 TAB 缩进和 NBSP 伪关闭围栏仍是代码内容',()=>{
+  for(const marker of ['\t```','```\u00a0','\u00a0```']) {
+    assert.equal(context.render('```markdown\nfirst\n'+marker+'\nafter\n```'),'<pre><code>first\n'+marker+'\nafter</code></pre>');
+  }
+  assert.equal(context.render('> ```markdown\n> first\n> ```\u00a0\n> after\n> ```'),'<pre><code>&gt; first\n&gt; ```\u00a0\n&gt; after</code></pre>');
 });
 test('列表内已有代码仍抽取为代码预览，保留多行与源码缩进',()=>{
   const input='- item\n\n  ```python\n  print(1)\n    print(2)\n  ```';
