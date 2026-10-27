@@ -16,6 +16,11 @@
    log 的 changes 是整句中文；一旦出现裸「冒号 + 空格」，YAML 会把它读成映射，
    页面上就印出 [object Object]（站上真出过这个事故）。
    ⇒ 只在必要时加双引号（yaml_scalar），不做无脑全引号（那会把 diff 搅乱）。
+   ★★ 2026-10-27 第二起同类事故：**双引号里夹真换行**。
+      加引号不等于安全 —— 引号内的 `\n` / `\r` / `\t` 与其余控制字符也必须转义，
+      否则续行顶到第 0 列，YAML 报 `Missing closing "quote"`，整篇 talks.md 解析失败，
+      连带 `tests/writer-content.test.ts`（读真实文件）把构建打死。
+      两起事故的共性：**"加了引号"被误当成"已经安全"**。
 
 ③ **行尾沿用原文件**。
    仓库 core.autocrlf=true，磁盘上可能是 CRLF 也可能是 LF。
@@ -64,15 +69,29 @@ def yaml_scalar(v) -> str:
         or ": " in s
         or s.endswith(":")
         or " #" in s
-        or "\n" in s
-        or "\r" in s
-        or "\t" in s
+        # ★ 任何控制字符都必须走引号（换行/制表符是"能不能解析"的问题，见下面的转义）
+        or any(ord(c) < 0x20 or ord(c) == 0x7F for c in s)
         or _LOOKS_NON_STR.match(s) is not None
     )
     if not needs_quote:
         return s
-    # 双引号 + 转义（YAML 双引号里只有 \ 和 " 需要转义）
-    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    # ★★ 双引号内**必须转义控制字符**，不只是 \ 和 "。这是第二起同类事故：
+    #   2026-10-27 一条两行的说说被写成 `text: "…试试<真换行>怎么…"`，
+    #   续行顶到第 0 列 ⇒ YAML 报 Missing closing "quote" ⇒ 整篇解析失败，
+    #   而 tests/writer-content.test.ts 会读真实的 talks.md ⇒ 构建直接挂。
+    #   （第一起是「冒号 + 空格」被读成映射、页面印出 [object Object]。）
+    #   顺序要紧：先把 `\` 翻倍，再处理引号与换行，否则会把刚写进去的
+    #   转义序列再转一次（`\n` → 先变 `\\n` 再变 `\\\\n`）。
+    esc = (
+        s.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\r", "\\r")
+        .replace("\n", "\\n")
+        .replace("\t", "\\t")
+    )
+    # 剩下的 C0 与 DEL 写 \xNN —— YAML 双引号里合法，且不会像裸控制字符那样把解析器搞崩
+    esc = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", lambda m: "\\x%02x" % ord(m.group()), esc)
+    return '"' + esc + '"'
 
 
 def _detect_newline(raw: bytes) -> str:
