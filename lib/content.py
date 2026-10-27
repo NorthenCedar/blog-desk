@@ -34,6 +34,7 @@ import os
 import re
 import tempfile
 import uuid
+from datetime import date as _date
 from pathlib import Path
 
 import yaml
@@ -209,6 +210,61 @@ def render_post_frontmatter(fm: dict) -> str:
     return "\n".join(out)
 
 
+def today_local() -> str:
+    """本机日期（YYYY-MM-DD）。抽出来是为了测试能替换时钟。"""
+    return _date.today().isoformat()
+
+
+def _norm_body(text: str) -> str:
+    return text.replace("\r\n", "\n")
+
+
+def sync_updated(fm: dict, body: str, old_text: str | None, today: str) -> dict:
+    """编辑已有文章时把 `updated` 推到 `today` —— **只进不退**。
+
+    为什么要有这一步：`updated` 是手填字段，而编辑正文的人不会记得同步它，
+    于是文章实际改过、页面却还印着旧的「更新于」（2026-10-27 实测：
+    my-python-memorandum 当天加了 106 行，页面仍显示 2026-10-25）。
+
+    规则（「更新于」是个单调字段，倒退了就是错的）：
+      · 原文没有 `updated` ⇒ **不主动添加**（可选字段，加不加是站主的排版选择）
+      · 当前值为空（用户手动清空）⇒ 尊重，不写回
+      · 没有实质变化（只是打开又保存）⇒ 不动
+      · 目标值 = `max(今天, 当前值)` —— 只会前进或不变，不会倒退
+      （上面的钳位保证 `当前值 >= 原文值`，所以不要再写一条"小于原文就不动"的判断：
+       max 之后那个分支永远走不到，是死代码 —— 2026-10-27 变异验证当场发现的。）
+
+    ★ 为什么不区分「手填」：客户端的编辑器可能还停在**上一次**推进之前的值，
+      若把「提交值早于原文」当成手填，就会把刚写好的日期顶回去（27→25→27 来回跳）。
+      单调规则对「手填一个更晚的日期」照样尊重；代价是不能往回改日期 ——
+      想彻底隐藏「更新于」，把字段清空即可。
+    """
+    if old_text is None:
+        return fm
+    try:
+        fm_text, old_body = split_frontmatter(old_text)
+        old_fm = parse_frontmatter(fm_text)
+    except ContentError:
+        return fm  # 原文读不出来就别猜，保持原样
+    original, current = str(old_fm.get("updated") or ""), str(fm.get("updated") or "")
+    if not original or not current:
+        return fm
+    if current < original:
+        # 「更新于」只进不退：客户端可能还停在上一次推进之前的日期。
+        # 这里把原文值写回去，而不是放行一个更早的日期。
+        fm, current = {**fm, "updated": original}, original
+    # 比较时先把 updated 抹成同一个值，避免"只有它不同"被当成实质变化。
+    # 走 render 而不是直接比 dict：键序、类型、空值都被这一层归一过。
+    if (render_post_frontmatter({**old_fm, "updated": current})
+            == render_post_frontmatter({**fm, "updated": current})
+            and _norm_body(body) == _norm_body(old_body)):
+        return fm
+    target = max(today, current)
+    out = dict(fm)
+    out["updated"] = target
+    return out
+
+
 class Content:
     """内容层门面。所有路径都相对 blog 仓库根。"""
 
@@ -310,16 +366,19 @@ class Content:
             "dir": str(d),
         }
 
-    def write_post(self, slug: str, fm: dict, body: str, base_revision: str | None = None) -> dict:
+    def write_post(self, slug: str, fm: dict, body: str, base_revision: str | None = None,
+                   today: str | None = None) -> dict:
         d = self.posts_dir / slug
         md = d / "index.md"
         self._check_revision(md, base_revision)
-        nl = "\n"
+        nl, old_text = "\n", None
         if md.is_file():
-            _, nl = self._read(md)
+            old_text, nl = self._read(md)
+        # 正文/字段有实质变化时把 updated 推到今天（手动值不覆盖，规则见 sync_updated）
+        fm = sync_updated(fm, body, old_text, today or today_local())
         text = f"---\n{render_post_frontmatter(fm)}\n---\n{body}"
         revision = self._write(md, text, nl, base_revision)
-        return {"ok": True, "path": str(md), "revision": revision}
+        return {"ok": True, "path": str(md), "revision": revision, "updated": fm.get("updated", "")}
 
     def create_post(self, slug: str, fm: dict) -> dict:
         if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", slug):

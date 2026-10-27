@@ -1064,6 +1064,14 @@
     }
     const saved = await POST('/api/post', { slug: target.slug, frontmatter, body, base_revision: target.revision });
     target.revision = saved.revision;
+    // 服务端会把 updated 往前推（规则见 docs/content-model.md §6.1），
+    // 必须把结果同步回表单：否则输入框还停在旧日期，下次保存会让人以为日期又被改回去了。
+    if (saved.updated !== undefined) {
+      const advanced = String(saved.updated || '');
+      if (advanced) frontmatter.updated = advanced; else delete frontmatter.updated;
+      const field = $('#f-updated');
+      if (field) field.value = advanced;
+    }
     target.frontmatter = frontmatter;
     target.body = body;
     toast('已保存 content/posts/' + target.slug + '/index.md');
