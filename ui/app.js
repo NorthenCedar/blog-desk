@@ -735,8 +735,12 @@
     comments: [],
   };
 
+  const forgeEditor = window.DeskForge?.create({ GET, POST, esc, toast, askForm, askConfirm,
+    pickFiles, fileToDataURL, renderMd, bodyCodeBlocks, insertAtCursor, refreshState, go, config: () => S.cfg });
+
   const VIEWS = {
     write: { title: '写作', hint: '文章 → content/posts/<slug>/index.md', enter: () => loadPosts() },
+    forge: { title: '造物台', hint: '整理作品，记录从想法到成形的过程', enter: () => forgeEditor?.enter() },
     tags: { title: '标签', hint: 'src/tag-registry.ts —— 站上标签的唯一事实来源',
             enter: () => loadTagManager() },
     publish: { title: '发布', hint: 'npm run verify → 提交 → 推送 main', enter: () => loadPublish() },
@@ -2258,6 +2262,7 @@
 
   const saveCurrent = () => {
     if (S.view === 'write') return savePost(false);
+    if (S.view === 'forge') return forgeEditor?.save(false);
     if (S.view === 'log') return saveLog();
     if (S.view === 'talks') return saveTalk();
     toast('这一页没有要保存的东西');
@@ -2308,6 +2313,7 @@
     initPublish();
     initShortcuts();
     initSettings();
+    forgeEditor?.init();
     $$('#nav button').forEach((b) => b.addEventListener('click', () => go(b.dataset.view)));
 
     $('main.work').inert = true;

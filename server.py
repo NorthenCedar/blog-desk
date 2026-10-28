@@ -53,6 +53,7 @@ from urllib.parse import parse_qs, urlparse
 from lib import config as cfgmod
 from lib import gitops, images, proc, videos
 from lib.content import Content, ContentError, ContentConflict
+from lib.forge import Forge
 from lib.videos import VideoError
 from lib.images import ImageError
 from lib.gitops import GitError
@@ -69,6 +70,7 @@ class App:
     def __init__(self, repo: Path, config: dict | None = None):
         self.repo = Path(repo)
         self.content = Content(self.repo)
+        self.forge = Forge(self.repo)
         self.config = config or {}
         self.push_lock = threading.RLock()
         self.last_push: dict | None = None
@@ -323,6 +325,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(st)
             if u.path == "/api/posts":
                 return self._json({"items": self.app.content.list_posts()})
+            if u.path == '/api/projects':
+                return self._json({'items': self.app.forge.list_projects()})
+            if u.path == '/api/project':
+                return self._json(self.app.forge.read_project(q.get('slug', [''])[0]))
+            if u.path == '/api/forge':
+                return self._json(self.app.forge.read_page())
+            if u.path == '/api/project/image':
+                data, ext = self.app.forge.read_image(q.get('slug', [''])[0], q.get('src', [''])[0])
+                return self._send(200, data, mimetypes.guess_type('image' + ext)[0] or 'application/octet-stream')
             if u.path == "/api/post":
                 return self._json(self.app.content.read_post(q.get("slug", [""])[0]))
             if u.path == "/api/talks":
@@ -381,6 +392,23 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = self._body()
             c = self.app.content
+
+            if u.path == '/api/project':
+                return self._json(self.app.forge.save_project(
+                    body.get('slug'), body.get('frontmatter'), body.get('body', ''),
+                    create=body.get('create') is True, base_revision=body.get('base_revision')))
+
+            if u.path == '/api/forge':
+                return self._json(self.app.forge.save_page(
+                    body.get('frontmatter'), base_revision=body.get('base_revision')))
+
+            if u.path == '/api/project/upload':
+                try:
+                    data = base64.b64decode((body.get('data') or '').split(',')[-1], validate=True)
+                except (ValueError, TypeError) as e:
+                    raise ImageError('图片数据无效，请重新选择文件') from e
+                return self._json(self.app.forge.upload(body.get('slug'), body.get('name') or 'image.png',
+                                                       data, body.get('max_kb') or 300))
 
             if u.path == "/api/sync":
                 return self._json(gitops.sync_clean(self.app.repo))

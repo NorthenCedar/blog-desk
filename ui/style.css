@@ -560,3 +560,41 @@ body.bare .titlebar:hover .light svg { opacity: 0; }
 }
 /* 孤儿标签（登记了却没有文章用它）—— 现在跑 npm run verify 就会红，标出来 */
 .tagrow.orphan .use { color: var(--warn); }
+/* 造物台沿用写作台表单；宽屏左右排布，小屏逐栏阅读。 */
+.forge-tabs { margin-bottom: var(--sp-4); flex-wrap: wrap; }
+.forge-split { height: auto; }
+.forge-split > *, #forge-editor, .forge-image-row .grow { min-width: 0; }
+#forge-editor [data-forge-field="body"] { font-family: var(--f-mono); min-height: 300px; }
+.forge-page-mode { grid-template-columns: minmax(0, 1fr); }
+.forge-page-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-3); }
+.forge-image-row { display: flex; align-items: flex-start; gap: var(--sp-3); margin: 0; }
+.forge-image-row .hint { overflow-wrap: anywhere; }
+.forge-image-row .row { flex-wrap: wrap; }
+.forge-thumb { width: 96px; height: 96px; object-fit: cover; border-radius: 8px; }
+#forge-list { margin-top: var(--sp-3); }
+#forge-list .list-item { width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 14px; border: 1px solid var(--hair); border-radius: 8px; background: var(--paper); color: inherit; cursor: pointer; text-align: left; }
+#forge-list .list-item[aria-current] { border-color: var(--accent); }
+.forge-preview[hidden] { display: none; }
+.forge-photo-preview { position: relative; overflow: hidden; height: 280px; border-radius: 12px; background: #ecebe5; isolation: isolate; }
+.forge-photo-preview picture { display: block; position: absolute; inset: 0; transition: transform .4s ease, filter .5s ease, opacity .5s ease; }
+.forge-photo-preview img { display: block; width: 100%; height: 100%; object-fit: contain; margin: 0; }
+.forge-effect-lift:is(:hover, :focus) picture { transform: translateY(-8px); }
+.forge-effect-tilt:is(:hover, :focus) picture { transform: perspective(700px) rotateY(-6deg) rotateX(4deg); }
+.forge-effect-zoom:is(:hover, :focus) picture { transform: scale(1.07); }
+.forge-effect-stack picture { inset: 12px 24px; }
+.forge-effect-stack picture:nth-child(1) { z-index: 3; }
+.forge-effect-stack picture:nth-child(2) { z-index: 2; }
+.forge-effect-stack picture:nth-child(3) { z-index: 1; }
+.forge-effect-stack:is(:hover, :focus) picture:nth-child(1) { transform: translate(-10px, -6px) rotate(-5deg); }
+.forge-effect-stack:is(:hover, :focus) picture:nth-child(2) { transform: translate(12px, 4px) rotate(5deg); }
+.forge-effect-stack:is(:hover, :focus) picture:nth-child(3) { transform: translate(20px, 8px) rotate(9deg); }
+.forge-effect-scan::after { content: ''; position: absolute; inset: 0; z-index: 4; pointer-events: none; background: linear-gradient(110deg, transparent 30%, #ffffff90 48%, transparent 66%); transform: translateX(-100%); transition: transform .6s ease; }
+.forge-effect-scan:is(:hover, :focus)::after { transform: translateX(100%); }
+.forge-effect-develop picture { filter: grayscale(.8); opacity: .7; }
+.forge-effect-develop:is(:hover, :focus) picture { filter: grayscale(0); opacity: 1; }
+.forge-model { border: 1px solid #cdd4c7; padding: 24px; border-radius: 12px; background: #f4f2e9; color: #244136; }
+.forge-model-bar { border-bottom: 1px solid #cdd4c7; padding-bottom: 12px; margin-bottom: 18px; font-weight: 700; }
+.forge-model-desk { border-left: 52px solid #dce3d8; }
+.forge-model pre { white-space: pre-wrap; }
+@media (max-width: 800px) { .forge-split, .forge-page-fields { grid-template-columns: 1fr; } .forge-image-row { flex-direction: column; } }
+@media (prefers-reduced-motion: reduce) { .forge-photo-preview picture, .forge-effect-scan::after { transition: none; transform: none !important; } }
