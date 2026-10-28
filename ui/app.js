@@ -2085,8 +2085,12 @@
 
   function showPushResult(r, _skipVerify) {
     const log = $('#pub-log');
+    // 日志面板显示纯文本：去掉终端配色和超链接控制符，保留正文、换行与代码缩进。
+    const plain = (value) => String(value ?? '')
+      .replace(/\u001b\][\s\S]*?(?:\u0007|\u001b\\)/g, '')
+      .replace(/(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]/g, '');
     // 后端已经把「构建与校验 / 提交 / 推送」三步入到 steps 里（跳过的也会写明"已跳过"）
-    const steps = (r.steps || []).map((s) => ({ name: s.name, state: s.ok ? 'ok' : 'bad', detail: s.detail || '' }));
+    const steps = (r.steps || []).map((s) => ({ name: s.name, state: s.ok ? 'ok' : 'bad', detail: plain(s.detail) }));
     renderSteps(steps.length ? steps : STEP_NAMES.map((n) => ({ name: n, state: 'pending' })));
 
     let text = '';
@@ -2098,13 +2102,13 @@
     }
     if (r.push && r.push.messages) text += '\n' + r.push.messages.join('\n') + '\n';
     if (r.error) text += '\n✘ ' + r.error + '\n';
-    log.textContent = text || '（没有输出）';
+    log.textContent = plain(text || '（没有输出）');
     log.scrollTop = log.scrollHeight;
 
     if (r.ok) {
       toast(r.push && r.push.up_to_date ? '远端本来就是最新，没推' : '推上去了 —— 1–3 分钟后 Cloudflare 自动部署');
     } else {
-      toast(r.error || '没有推成功，看下面的输出', true);
+      toast(plain(r.error) || '没有推成功，看下面的输出', true);
     }
   }
 

@@ -104,6 +104,25 @@ test('跳过构建后的推送失败也保留步骤和 Git 错误详情', async 
   assert.equal(JSON.parse(h.calls.requests[0].init.body).skip_verify, true);
 });
 
+test('彩色校验输出以纯文本显示，保留中文、失败文件和代码缩进', async () => {
+  const tests = '\x1b[22m\x1b[1m\x1b[31m2 failed\x1b[39m | \x1b[32m1307 passed\x1b[39m | 1 skipped (1310)';
+  const tail = '\x1b[31mFAIL\x1b[39m tests/writer-forge-content.test.ts\n  64| expect(正文).toBe(原文)\n\x1b]8;;https://example.invalid/\x1b\\校验详情\x1b]8;;\x1b\\';
+  const h = publishHarness({ result: {
+    ok: false, error: '\x1b[31m构建/测试没过\x1b[39m —— 没有推送。看下面的输出。',
+    steps: [{ name: '构建与校验', ok: false, detail: `37 页 · ${tests}` }],
+    build: { ok: false, returncode: 1, pages: 37, tests, tail },
+  } });
+  await h.context.runPush(false);
+  const log = h.nodes.get('#pub-log').textContent, steps = h.nodes.get('#pub-steps').innerHTML;
+  for (const text of [log, steps]) {
+    assert.ok(!text.includes('\x1b'), '不能把终端颜色控制符展示给用户');
+    assert.ok(text.includes('2 failed | 1307 passed | 1 skipped (1310)'));
+  }
+  assert.ok(log.includes('FAIL tests/writer-forge-content.test.ts\n  64| expect(正文).toBe(原文)\n校验详情'));
+  assert.equal(h.calls.toasts.at(-1).message, '构建/测试没过 —— 没有推送。看下面的输出。');
+  assert.equal(h.calls.requests.length, 1);
+});
+
 test('普通保存冲突继续抛错，不能当成保存成功', async () => {
   const h = publishHarness({ status: 409, result: { error: '内容已有更新，请重新载入' } });
   await assert.rejects(h.context.POST('/api/post', { body: '未保存内容' }), /内容已有更新/);
