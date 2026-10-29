@@ -286,7 +286,7 @@
         const open = lines[block.first], close = lines[block.last];
         if (level === 'code') return unchanged;
         if (level === 'language') {
-          if (!/^(python|javascript|typescript|json|bash|text)$/.test(language)) return unchanged;
+          if (!/^(python|c|cpp|javascript|typescript|json|bash|text)$/.test(language)) return unchanged;
           const head = /^( {0,3})(`{3,}|~{3,})([ \t]*)([^ \t]*)(.*)$/.exec(open.text);
           const replacement = head[1] + head[2] + head[3] + language + head[5];
           const after = open.offset + open.text.length;
@@ -308,7 +308,7 @@
         const content = body.slice(s, e);
         const longest = Array.from(content.matchAll(/`+/g)).reduce((length, match) => Math.max(length, match[0].length), 0);
         const fence = '`'.repeat(Math.max(3, longest + 1));
-        const lang = /^(python|javascript|typescript|json|bash|text)$/.test(language) ? language : 'python';
+        const lang = /^(python|c|cpp|javascript|typescript|json|bash|text)$/.test(language) ? language : 'python';
         const lead = s > 0 && body[s - 1] !== '\n' ? newline : '';
         const tail = e < body.length && body[e] !== '\r' && body[e] !== '\n' ? newline : '';
         const prefix = lead + fence + lang + newline;
@@ -331,6 +331,71 @@
       return { body:result, start:cursor, end:cursor };
     }
     return { body:result, start:before, end:output.slice(0, last+1).join('').length - lines[last].newline.length };
+  }
+
+  function formatBodyInline(body, start, end, kind) {
+    const pair = { strong:['**','**'], em:['*','*'], strike:['<del>','</del>'] }[kind];
+    const unchanged = { body, start, end };
+    if (!pair) return unchanged;
+    const intersects = (from, to) => start === end ? start >= from && start < to : start < to && end > from;
+    const { lines, blocks } = bodyCodeBlocks(body);
+    if (blocks.some(block => intersects(lines[block.first].offset, lines[block.last].offset + lines[block.last].text.length + lines[block.last].newline.length)) ||
+        lines.some(line => /^(?:(?: {0,3}>[ \t]?)+)?(?: {4}|\t)/.test(line.text) && intersects(line.offset, line.offset + line.text.length))) {
+      return { ...unchanged, error:'选区包含代码，请只选择正文文字设置加粗、斜体或删除线。' };
+    }
+    const ticks=[...body.matchAll(/`+/g)],next=new Map(),closing=[];
+    for(let i=ticks.length-1;i>=0;i--){closing[i]=next.get(ticks[i][0].length);next.set(ticks[i][0].length,i);}
+    for(let i=0;i<ticks.length;i++){
+      if((body.slice(0,ticks[i].index).match(/\\+$/)?.[0].length||0)%2||closing[i]===undefined)continue;
+      const j=closing[i];
+      if(intersects(ticks[i].index,ticks[j].index+ticks[j][0].length))return { ...unchanged, error:'行内代码保留原样，请选择代码以外的正文文字。' };
+      i=j;
+    }
+    if (start === end) {
+      const text = {strong:'加粗文字',em:'斜体文字',strike:'删除线文字'}[kind];
+      return {body:body.slice(0,start)+pair[0]+text+pair[1]+body.slice(end),start:start+pair[0].length,end:start+pair[0].length+text.length};
+    }
+    const selected = body.slice(start,end),left = selected.match(/^\s*/)[0].length,right = selected.match(/\s*$/)[0].length;
+    const s = start+left,e = end-right;
+    if (e <= s) return unchanged;
+    const text = body.slice(s,e);
+    const wrappers=[['<del>','</del>'],['~~','~~'],['**','**'],['*','*']];
+    const own=kind==='strike'?[pair,['~~','~~']]:[pair];
+    const matches=(value,p)=>value.startsWith(p[0])&&value.endsWith(p[1])&&value.length>=p[0].length+p[1].length&&
+      (p[0]!=='*'||(value.match(/^\*+/)[0].length%2===1&&value.match(/\*+$/)[0].length%2===1));
+    const removeTarget=value=>{
+      const found=own.find(p=>matches(value,p));if(found)return value.slice(found[0].length,-found[1].length);
+      const outer=wrappers.find(p=>!own.some(o=>o[0]===p[0])&&matches(value,p));
+      if(outer){const inner=removeTarget(value.slice(outer[0].length,-outer[1].length));if(inner!==null)return outer[0]+inner+outer[1];}
+      return null;
+    };
+    const addTarget=value=>{
+      if(removeTarget(value)!==null)return value;
+      const outer=wrappers.find(p=>matches(value,p));
+      return outer?outer[0]+addTarget(value.slice(outer[0].length,-outer[1].length))+outer[1]:pair[0]+value+pair[1];
+    };
+    const single=!/[\r\n]/.test(text);
+    if(single&&kind==='strike'){
+      const before=body.slice(0,s),after=body.slice(e),inside=before.match(/<del>(\*{1,3})$/);
+      if(inside&&after.startsWith(inside[1]+'</del>')){
+        const a=s-inside[1].length-5,b=e+inside[1].length;
+        return {body:body.slice(0,a)+inside[1]+text+inside[1]+body.slice(b+6),start:s-5,end:e-5};
+      }
+      const stars=before.match(/\*{1,3}$/)?.[0];
+      if(stars&&after.startsWith(stars)){
+        const a=s-stars.length,b=e+stars.length;
+        return {body:body.slice(0,a)+'<del>'+stars+text+stars+'</del>'+body.slice(b),start:s+5,end:e+5};
+      }
+    }
+    if(single)for(const p of own){
+      const before=body.slice(0,s),after=body.slice(e);
+      if(before.endsWith(p[0])&&after.startsWith(p[1])&&(p[0]!=='*'||(before.match(/\*+$/)[0].length%2&&after.match(/^\*+/)[0].length%2)))
+        return {body:body.slice(0,s-p[0].length)+text+body.slice(e+p[1].length),start:s-p[0].length,end:e-p[0].length};
+    }
+    const remove=text.split(/\r?\n/).filter(line=>line.trim()).every(line=>removeTarget(line.trim())!==null);
+    const wrapped=text.replace(/[^\r\n]+/g,line=>line.replace(/^(\s*)(.*?)(\s*)$/,(_all,a,t,b)=>!t?line:a+(remove?removeTarget(t):addTarget(t))+b));
+    const direct=single&&!remove&&wrapped===pair[0]+text+pair[1];
+    return {body:body.slice(0,s)+wrapped+body.slice(e),start:s+(direct?pair[0].length:0),end:s+wrapped.length-(direct?pair[1].length:0)};
   }
 
   // 同一份边界信息用于代码操作与预览；容器内的代码只识别并保护，不改其源码。
@@ -453,9 +518,11 @@
             ? `<img src="${esc(imgURL(L.u))}" alt="${esc(L.alt || '')}" loading="lazy">`
             : `<a href="${esc(L.u)}" target="_blank" rel="noopener noreferrer">${esc(L.txt)}</a>`;
         })
-        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*\*\*([^*\n]+)\*\*\*/g, '<strong><em>$1</em></strong>')
+        .replace(/\*\*([^\n]+?)\*\*/g, '<strong>$1</strong>')
         .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
         .replace(/~~([^~]+)~~/g, '<del>$1</del>')
+        .replace(/&lt;(\/?)del&gt;/g,'<$1del>')
         .replace(/\u0000I(\d+)\u0000/g, (_m, i) => `<code>${esc(inlines[+i])}</code>`);
 
     const lines = s.split('\n');
@@ -1253,7 +1320,7 @@
       const last = lines.findLastIndex(line => line.offset < body.selectionEnd || line.offset <= body.selectionStart);
       const block = blocks.find(block => !block.nested && block.first <= first && block.last >= last);
       const original = $('#code-language-original');
-      if (block && !/^(python|javascript|typescript|json|bash|text)$/.test(block.language)) {
+      if (block && !/^(python|c|cpp|javascript|typescript|json|bash|text)$/.test(block.language)) {
         original.textContent = `原语言（${block.language || '未指定'}）`;
         original.hidden = false; language.value = '';
       } else {
@@ -1273,6 +1340,19 @@
     $$('[data-body-level]').forEach(button => {
       button.addEventListener('mousedown', event => event.preventDefault());
       button.addEventListener('click', () => applyFormat(Number(button.dataset.bodyLevel)));
+    });
+    const applyInline = kind => {
+      if (ready()) applyBodyEdit(body, formatBodyInline(body.value, body.selectionStart, body.selectionEnd, kind));
+    };
+    $$('[data-body-inline]').forEach(button => {
+      button.addEventListener('mousedown', event => event.preventDefault());
+      button.addEventListener('click', () => applyInline(button.dataset.bodyInline));
+    });
+    body.addEventListener('keydown', event => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      const key = (event.key || '').toLowerCase();
+      const kind = key==='b'?'strong':key==='i'?'em':key==='x'&&event.shiftKey?'strike':null;
+      if (kind) { event.preventDefault(); applyInline(kind); }
     });
     $('#btn-code-block').addEventListener('mousedown', event => event.preventDefault());
     $('#btn-code-block').addEventListener('click', () => applyFormat('code'));

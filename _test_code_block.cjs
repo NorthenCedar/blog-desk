@@ -17,6 +17,12 @@ test('选中多行只生成一个 Python 块，代码缩进与空行原样保留
   assert.equal(result.body,'```python\ndef f():\n    a = 1\n\n\treturn a\n```');
   assert.equal(result.body.slice(result.start,result.end),code);
 });
+for(const language of ['c','cpp'])test(`C/C++ 插入和切换语言保留缩进与附带信息：${language}`,()=>{
+  const code='#include <stdio.h>\nint main() {\n    return 0;\n}';
+  assert.equal(format(code,0,code.length,'code',language).body,'```'+language+'\n'+code+'\n```');
+  const raw='```python linenos\n'+code+'\n```',at=raw.indexOf('return');
+  assert.equal(format(raw,at,at,'language',language).body,raw.replace('```python','```'+language));
+});
 test('选区在下一行开头结束时不把下一段放进代码，CRLF 不变',()=>{
   const result=format('a\r\n  b\r\n正文',0,8);
   assert.equal(result.body,'```python\r\na\r\n  b\r\n```\r\n正文');
@@ -119,6 +125,11 @@ test('预览保留长围栏内的三个反引号，波浪围栏不变成普通�
   assert.equal(context.render('````python\nx = "```"\n````'),'<pre><code>x = &quot;```&quot;</code></pre>');
   assert.equal(context.render('~~~json\n{"a": 1}\n~~~'),'<pre><code>{&quot;a&quot;: 1}</code></pre>');
 });
+test('预览支持嵌套三种格式，不显示Markdown星号，代码原样保留',()=>{
+  assert.equal(context.render('**甲 *乙* 丙**'),'<p><strong>甲 <em>乙</em> 丙</strong></p>');
+  assert.equal(context.render('这是<del>***文字***</del>。'),'<p>这是<del><strong><em>文字</em></strong></del>。</p>');
+  assert.equal(context.render('`<del>**代码**</del>`'),'<p><code>&lt;del&gt;**代码**&lt;/del&gt;</code></p>');
+});
 test('预览中的 TAB 缩进和 NBSP 伪关闭围栏仍是代码内容',()=>{
   for(const marker of ['\t```','```\u00a0','\u00a0```']) {
     assert.equal(context.render('```markdown\nfirst\n'+marker+'\nafter\n```'),'<pre><code>first\n'+marker+'\nafter</code></pre>');
@@ -154,7 +165,7 @@ function editorHarness(text, selectionStart=0, selectionEnd=selectionStart) {
   const heading=[0,2,3].map(level=>{const button=new Control();button.dataset={bodyLevel:String(level)};return button;});
   const messages=[];
   const sandbox=vm.createContext({
-    $:lookup,$$:()=>heading,toast:message=>messages.push(message),guard:(_button,fn)=>fn,
+    $:lookup,$$:selector=>selector==='[data-body-level]'?heading:[],toast:message=>messages.push(message),guard:(_button,fn)=>fn,
     document:{execCommand(command,_show,replacement){
       assert.equal(command,'insertText');
       body.text=body.text.slice(0,body.selectionStart)+replacement+body.text.slice(body.selectionEnd);
