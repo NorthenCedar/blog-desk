@@ -5,6 +5,7 @@ import io
 import tempfile
 import unittest
 import json
+import os
 import subprocess
 import threading
 from http.server import ThreadingHTTPServer
@@ -15,7 +16,7 @@ from pathlib import Path
 from PIL import Image
 from lib.content import ContentError, ContentConflict
 
-ROOT = Path('D:/router/work/forge-writer-20261028/desktop-tests')
+ROOT = Path(os.environ.get('DESK_TEST_ROOT', 'D:/router/work/forge-writer-20261028/desktop-tests'))
 ROOT.mkdir(parents=True, exist_ok=True)
 spec = importlib.util.find_spec('lib.forge')
 if spec:
@@ -25,6 +26,14 @@ else:
 
 
 class ForgeTests(unittest.TestCase):
+    def test_writer_strike_tags_are_safe_and_must_be_balanced(self):
+        fields=self.fields()
+        saved=self.forge.save_project('demo', fields, '这是<del>***旧字***</del>。', create=True)
+        self.assertEqual(saved['body'], '这是<del>***旧字***</del>。')
+        for body in ['<del onclick="x">字</del>', '<del>字', '</del>字', '<del>a `</del>`', '<del>a \\</del>']:
+            with self.subTest(body=body), self.assertRaises(ContentError):
+                self.forge.save_project('demo', fields, body, base_revision=saved['revision'])
+
     def setUp(self):
         self.assertIsNotNone(Forge, '桌面端尚不能读写造物台项目和页面文案')
         self.tmp = tempfile.TemporaryDirectory(dir=ROOT)

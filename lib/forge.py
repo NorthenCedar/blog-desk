@@ -357,6 +357,17 @@ class Forge:
                 raise ContentError('正文链接须为站内路径或不含凭据的 HTTPS 地址')
             return ''
         html = re.sub(r'<((?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^<>\s]*)|(?:[^<>\s@]+@[^<>\s@]+))>', check_autolink, prose)
+        strike_depth = 0
+        strike_tags = [tag for tag in re.finditer(r'</?del>', html)
+                       if (len(html[:tag.start()]) - len(html[:tag.start()].rstrip('\\'))) % 2 == 0]
+        for tag in strike_tags:
+            strike_depth += -1 if tag.group() == '</del>' else 1
+            if strike_depth < 0:
+                raise ContentError('项目删除线标签未配对')
+        if strike_depth:
+            raise ContentError('项目删除线标签未配对')
+        for tag in reversed(strike_tags):
+            html = html[:tag.start()] + html[tag.end():]
         if re.search(r'</?[A-Za-z][A-Za-z0-9:-]*(?=[\s/>])|<![A-Za-z]|<\?', html):
             raise ContentError('项目正文请使用 Markdown 图片与文字，不接受活动 HTML 标签')
 
