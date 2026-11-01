@@ -453,6 +453,54 @@
     body.setSelectionRange(result.start, result.end);
   }
 
+  function indentBodyText(body, start, end, outdent = false) {
+    const changes = [];
+    if (!outdent && !/[\r\n]/.test(body.slice(start, end))) {
+      changes.push({ at:start, remove:end-start, insert:'    ' });
+    } else {
+      let first = start;
+      while (first > 0 && !/[\r\n]/.test(body[first-1])) first--;
+      const breaks = /\r\n|\r|\n/g; breaks.lastIndex = first;
+      let at = first;
+      while (true) {
+        const remove = outdent ? /^ {0,4}/.exec(body.slice(at))[0].length : 0;
+        if (!outdent || remove) changes.push({ at, remove, insert:outdent?'':'    ' });
+        const next = breaks.exec(body);
+        if (!next || next.index + next[0].length >= end) break;
+        at = next.index + next[0].length;
+      }
+    }
+    const map = position => {
+      let delta = 0;
+      for (const change of changes) {
+        if (position < change.at) break;
+        if (position < change.at + change.remove) return change.at + delta + change.insert.length;
+        delta += change.insert.length - change.remove;
+      }
+      return position + delta;
+    };
+    let updated = body;
+    for (const change of changes.slice().reverse()) updated = updated.slice(0,change.at) + change.insert + updated.slice(change.at+change.remove);
+    return { body:updated, start:map(start), end:map(end) };
+  }
+
+  function bindBodyIndentKeys(root) {
+    const composing = new WeakSet();
+    const isBody = target => target?.matches?.('#f-body, #t-text, [data-forge-field="body"]');
+    root.addEventListener('compositionstart', event => { if (isBody(event.target)) composing.add(event.target); });
+    root.addEventListener('compositionend', event => { composing.delete(event.target); });
+    root.addEventListener('keydown', event => {
+      const body = event.target;
+      if (event.key !== 'Tab' || event.ctrlKey || event.metaKey || event.altKey || !isBody(body)
+        || body.disabled || body.readOnly || event.isComposing || event.keyCode === 229 || composing.has(body)) return;
+      event.preventDefault();
+      const direction = body.selectionDirection, top = body.scrollTop, left = body.scrollLeft;
+      applyBodyEdit(body, indentBodyText(body.value,body.selectionStart,body.selectionEnd,event.shiftKey));
+      body.setSelectionRange(body.selectionStart,body.selectionEnd,direction);
+      body.scrollTop = top; body.scrollLeft = left;
+    });
+  }
+
   /* ══════════════════ 四、迷你 Markdown ══════════════════
      只覆盖站上文章真正会用的语法；**不求全**，求可预期。
      图片路径：正文写 `![](./名字.jpg)`（相对文章目录）⇒ 换成 /api/file?path=<绝对路径>。
@@ -2358,6 +2406,7 @@
   };
 
   function initKeys() {
+    bindBodyIndentKeys(document);
     // hash 变了就切页 —— 浏览器前进/后退、手改地址栏都能用。
     // ★ 必须有这个：只读一次 location.hash（在 boot 里）的话，
     //   之后任何改 hash 的跳转都**不会**换页，看起来就是"点了没反应"。

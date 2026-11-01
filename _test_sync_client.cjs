@@ -24,6 +24,7 @@ function harness({ config, sync = Promise.resolve({ updated: true, message: '已
   const context = {
     S: { cfg: {} }, window: {}, location: { hash: '' }, VIEWS: { write: {} },
     forgeEditor: { init() {} },
+    galleryEditor: { init() {} },
     $: selector => selector === 'main.work' ? main : nav, $$: () => [],
     GET: async () => config ? config.promise : {},
     POST: async () => sync,
