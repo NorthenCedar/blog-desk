@@ -805,7 +805,10 @@
   const forgeEditor = window.DeskForge?.create({ GET, POST, esc, toast, askForm, askConfirm,
     pickFiles, fileToDataURL, renderMd, bodyCodeBlocks, insertAtCursor, refreshState, go, config: () => S.cfg });
 
+  const galleryEditor = window.DeskGallery?.create({ GET, POST, esc, toast, askForm, askConfirm,
+    pickFiles, fileToDataURL });
   const VIEWS = {
+    albums: { title: '相册编辑', hint: '独立封面、编排与本册发布', enter: () => galleryEditor?.enter() },
     write: { title: '写作', hint: '文章 → content/posts/<slug>/index.md', enter: () => loadPosts() },
     forge: { title: '造物台', hint: '整理作品，记录从想法到成形的过程', enter: () => forgeEditor?.enter() },
     tags: { title: '标签', hint: 'src/tag-registry.ts —— 站上标签的唯一事实来源',
@@ -2347,6 +2350,7 @@
   const saveCurrent = () => {
     if (S.view === 'write') return savePost(false);
     if (S.view === 'forge') return forgeEditor?.save(false);
+    if (S.view === 'albums') return galleryEditor?.save();
     if (S.view === 'log') return saveLog();
     if (S.view === 'talks') return saveTalk();
     toast('这一页没有要保存的东西');
@@ -2398,6 +2402,7 @@
     initShortcuts();
     initSettings();
     forgeEditor?.init();
+    galleryEditor?.init();
     $$('#nav button').forEach((b) => b.addEventListener('click', () => go(b.dataset.view)));
 
     $('main.work').inert = true;

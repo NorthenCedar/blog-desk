@@ -1,0 +1,28 @@
+const assert=require('node:assert/strict');
+const {createSession,removeImage}=require('./ui/gallery.js');
+const deferred=()=>{let resolve;return {promise:new Promise(r=>resolve=r),resolve}};
+const album=slug=>({slug,revision:'old',frontmatter:{title:'old',images:[{src:'./a.png',alt:'a'},{src:'./b.png',alt:'b'}]}});
+(async()=>{
+  const removing={images:[{src:'./a.png'},{src:'./b.png'}],cover:'./a.png'};
+  removeImage(removing,removing.images[0]);assert.equal(removing.cover,'./b.png');
+  removeImage(removing,removing.images[0]);assert(!('cover' in removing));assert.equal(removing.images.length,0);
+  let pending=deferred(),calls=[];
+  const session=createSession((url,payload)=>{calls.push({url,payload});return pending.promise});
+  session.open(album('one'));
+  const saving=session.save(),reference=session.current.frontmatter;
+  session.current.frontmatter.title='later';session.edit();
+  pending.resolve({revision:'new',frontmatter:{...album('one').frontmatter,cover:'./a.png',presentation:{arrangement:'left'}}});
+  await saving;assert.equal(session.current.revision,'new');assert.equal(session.current.frontmatter.title,'later');assert(session.dirty);
+  assert.equal(reference,session.current.frontmatter);
+  pending=deferred();const uploading=session.upload({name:'upload.png'},async()=> 'data');
+  await Promise.resolve();session.current.frontmatter.images.reverse();session.edit();
+  pending.resolve({rel:'./c.png'});await uploading;
+  assert.deepEqual(session.current.frontmatter.images.map(x=>x.src),['./b.png','./a.png','./c.png']);
+  pending=deferred();const oldUpload=session.upload({name:'late.png'},async()=> 'data');await Promise.resolve();
+  session.open(album('two'));pending.resolve({rel:'./late.png'});assert.equal(await oldUpload,false);
+  assert.equal(session.current.frontmatter.images.length,2);
+  pending=deferred();const oldSave=session.save();session.open(album('three'));
+  pending.resolve({revision:'wrong',frontmatter:{images:[]}});await oldSave;
+  assert.equal(session.current.slug,'three');assert.equal(session.current.revision,'old');
+  console.log('gallery session: save/edit overlap, stable reorder/upload, stale upload/save passed');
+})().catch(error=>{console.error(error);process.exitCode=1});

@@ -54,6 +54,7 @@ from lib import config as cfgmod
 from lib import gitops, images, proc, videos
 from lib.content import Content, ContentError, ContentConflict
 from lib.forge import Forge
+from lib.gallery import Gallery
 from lib.videos import VideoError
 from lib.images import ImageError
 from lib.gitops import GitError
@@ -71,6 +72,7 @@ class App:
         self.repo = Path(repo)
         self.content = Content(self.repo)
         self.forge = Forge(self.repo)
+        self.gallery = Gallery(self.repo)
         self.config = config or {}
         self.push_lock = threading.RLock()
         self.last_push: dict | None = None
@@ -327,6 +329,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"items": self.app.content.list_posts()})
             if u.path == '/api/projects':
                 return self._json({'items': self.app.forge.list_projects()})
+            if u.path == '/api/albums':
+                return self._json({'items': self.app.gallery.list_albums()})
+            if u.path == '/api/album':
+                return self._json(self.app.gallery.read_album(q.get('slug', [''])[0]))
+            if u.path == '/api/album/image':
+                data, ext = self.app.gallery.read_image(q.get('slug', [''])[0], q.get('src', [''])[0])
+                return self._send(200, data, mimetypes.guess_type('image' + ext)[0] or 'application/octet-stream')
             if u.path == '/api/project':
                 return self._json(self.app.forge.read_project(q.get('slug', [''])[0]))
             if u.path == '/api/forge':
@@ -392,6 +401,27 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = self._body()
             c = self.app.content
+
+            if u.path == '/api/album':
+                return self._json(self.app.gallery.save_album(body.get('slug'), body.get('frontmatter'),
+                    create=body.get('create') is True, base_revision=body.get('base_revision')))
+            if u.path == '/api/album/recommend':
+                return self._json(self.app.gallery.recommend(body.get('slug'), body.get('frontmatter') or {}))
+            if u.path == '/api/album/prepare':
+                return self._json(self.app.gallery.prepare_publish(body.get('slug'), body.get('base_revision')))
+            if u.path == '/api/album/publish':
+                with self.app.push_lock:
+                    snapshot = self.app.gallery.prepare_publish(body.get('slug'), body.get('base_revision'))
+                    if body.get('tree') != snapshot['tree']:
+                        raise ContentConflict('相册快照已变化，请重新准备并确认')
+                    return self._json(gitops.publish_album(self.app.repo, snapshot,
+                        verify=lambda folder: App(folder, self.app.config).run_build(), on_log=self.app.log))
+            if u.path == '/api/album/upload':
+                try:
+                    data = base64.b64decode((body.get('data') or '').split(',')[-1], validate=True)
+                except (ValueError, TypeError) as e:
+                    raise ImageError('图片数据无效') from e
+                return self._json(self.app.gallery.upload(body.get('slug'), body.get('name') or 'image.png',data))
 
             if u.path == '/api/project':
                 return self._json(self.app.forge.save_project(

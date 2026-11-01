@@ -17,6 +17,7 @@ import json
 import os
 import subprocess
 import time
+import tempfile
 import urllib.error
 import urllib.request
 from ctypes import wintypes
@@ -644,3 +645,70 @@ def push(repo: Path, on_log=None, expected_head: str | None = None) -> dict:
     return {"ok": True, "sha": head, "sha_short": head[:8], "remote": head,
             "remote_short": head[:8], "files": files, "messages": messages,
             "synced": not changed, "sync_gate": None, "head_changed": changed}
+
+
+def publish_album(repo: Path, snapshot: dict, *, verify, on_log=None) -> dict:
+    """在独立 worktree 校验及提交精确单册树；保留真实索引、HEAD 和其他草稿。"""
+    repo = Path(repo).resolve()
+    log = on_log or (lambda *_: None)
+    base, tree = snapshot['base'], snapshot['tree']
+    for operation in ('MERGE_HEAD','CHERRY_PICK_HEAD','REVERT_HEAD','rebase-merge','rebase-apply'):
+        path = Path(git(repo,'rev-parse','--git-path',operation))
+        if (path if path.is_absolute() else repo/path).exists():
+            raise GitError('源仓库正在合并或整理提交，请完成后再发布本册')
+    origin = git(repo, 'remote', 'get-url', 'origin')
+    if REPO not in origin.replace('\\', '/'):
+        raise GitError('origin 不符合已配置博客仓库，已停止本册发布')
+    if git(repo, 'symbolic-ref', '--quiet', '--short', 'HEAD') != 'main':
+        raise GitError('本册发布需要本地 main 与远端 main 完全同步')
+    remote = _fetch_main(repo)
+    if git(repo, 'rev-parse', 'HEAD') != base or remote['sha'] != base:
+        raise GitError('main 有未同步提交，请先处理历史；其他未提交内容均已保留')
+    prefix = 'content/gallery/' + snapshot['slug'] + '/'
+    changes = [x for x in git_bin(repo, 'diff-tree', '--no-commit-id', '--name-only', '-r', '-z', base, tree).decode('utf-8').split('\0') if x]
+    if not changes or any(not name.startswith(prefix) for name in changes):
+        raise GitError('发布快照没有本册修改，或包含本册之外的路径')
+    with tempfile.TemporaryDirectory(prefix='desk-album-release-') as outer:
+        folder = Path(outer) / 'checkout'
+        linked = False
+        git(repo, 'worktree', 'add', '--detach', str(folder), base)
+        try:
+            git(folder, 'read-tree', '--reset', '-u', tree)
+            # 仅共享依赖目录；源码和内容由不可变 Git 树检出。
+            dependencies = repo / 'node_modules'
+            link = folder / 'node_modules'
+            if dependencies.is_dir() and not link.exists():
+                if os.name == 'nt':
+                    result = proc.run(['cmd', '/c', 'mklink', '/J', str(link), str(dependencies)],capture_output=True)
+                    if result.returncode: raise GitError('无法为隔离校验连接依赖目录；未提交或推送')
+                else: link.symlink_to(dependencies, target_is_directory=True)
+                linked = True
+            log('在本册不可变快照运行 npm run verify…')
+            checked = verify(folder)
+            if not checked.get('ok'): raise GitError('本册隔离构建/测试未通过，未提交或推送：'+str(checked.get('output',checked))[-1200:])
+            if (_run(['git', 'diff', '--quiet'], folder).returncode != 0
+                    or git(folder, 'ls-files', '--others', '--exclude-standard')):
+                raise GitError('校验过程改变了检出的内容，已停止提交；请检查构建生成文件')
+            git(folder, 'add', '--', prefix)
+            if git(folder, 'write-tree') != tree:
+                raise GitError('校验过程改变了发布快照，已停止提交')
+            # 普通 commit 保留仓库 hooks；不使用 commit-tree 或 --no-verify。
+            git(folder, 'commit', '-m', '写作台：发布相册 ' + snapshot['slug'])
+            sha = git(folder, 'rev-parse', 'HEAD')
+            if git(folder, 'rev-parse', 'HEAD^{tree}') != tree or git(folder, 'rev-parse', 'HEAD^') != base:
+                raise GitError('提交 hook 改变快照或父提交，未推送；请检查 '+sha)
+            if git(repo, 'rev-parse', 'HEAD') != base:
+                raise GitError('校验期间源仓库 HEAD 改变，未推送')
+            # 与全量发布相同的普通显式 SHA 推送，远端并发前进由 Git 拒绝。
+            _network_git(repo, 'push', '--porcelain', 'origin', f'{sha}:refs/heads/main')
+            confirmed = _fetch_main(repo)
+            if confirmed['sha'] != sha:
+                raise GitError('推送后远端已变化，请核对本次提交 '+sha+'；未再次推送')
+            log('本册已发布 '+sha[:8]+'；源工作区与其他未提交内容保持原状')
+            return dict(ok=True,sha=sha,tree=tree,paths=snapshot['paths'],verified=True,
+                        message='本册已发布。源仓库保留原样；请处理其他改动后同步远端 main。')
+        finally:
+            if linked:
+                if os.name == 'nt': os.rmdir(link)
+                else: link.unlink()
+            git(repo, 'worktree', 'remove', '--force', str(folder))

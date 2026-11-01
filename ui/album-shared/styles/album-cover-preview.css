@@ -1,0 +1,5 @@
+.album-preview-controls{display:flex;gap:var(--sp-2);flex-wrap:wrap;margin-block:var(--sp-3)}
+.album-preview-controls button{font:inherit;cursor:pointer;color:var(--ink);border:1px solid var(--hair);border-radius:var(--sp-2);background:var(--paper);padding:var(--sp-2) var(--sp-3)}
+.album-preview-controls button:focus-visible{outline:2px solid var(--accent-ink);outline-offset:2px}
+.album-preview-viewport{width:100%;position:relative;overflow:hidden;border:1px solid var(--hair);margin-inline:auto;isolation:isolate}
+.album-preview-frame{position:absolute;top:0;left:0;border:0;transform-origin:0 0;pointer-events:none}

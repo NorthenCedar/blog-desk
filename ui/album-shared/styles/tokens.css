@@ -1,0 +1,920 @@
+/* 改这里 = 改全站视觉。组件里不许出现字面量颜色与间距。
+   P1（2026-09-25 站主定案）：配色从旧方向（纯白 + 橙）换成莱茵方向（乳白 + 绿）。
+   docs/design-spec.md §3/§5 已同步更新 —— 两处应始终一致，不一致就是 bug。 */
+:root {
+  /* 亮暗共用线宽；揭幕终点与静止浓度共用参数，避免摘掉开场标记时跳变。 */
+  --home-flow-width: 1.2px;
+  --home-flow-field-opacity: 0.22;
+  --home-flow-path-opacity: 0.62;
+  /* 标签区百褶环：波包经过时沿切线疏密振动，并局部染成淡绿。
+     ★★★ 浓淡这三轮反复了一次来回，每一次都有量：
+        ① 10-15 站主：「线上太淡，要到参考图那个浓度」→ 0.3 → 1
+        ② 10-16 站主看完对比度：「改回 0.75」
+        ③ 10-16 站主：「为啥就是没有预览中的那个感觉」→ 回到 0.89
+
+        ★ 量的一直是**渲染浓度**，不是 α 本身（α 不是可移植的量，AGENTS §5）。
+          刻度统一用 **WCAG 相对亮度**（不是 0.299/0.587/0.114 线性灰度 ——
+          同一像素在两套刻度下能差 60 级，这一轮就被它坑过一轮）。
+          关键关系是**精确的线性关系**：drop = α · (纸白亮度 − 底纹该像素亮度)。
+          ⚠ 下表是**兜底图**的读数（canvas 比它再深约 11%，见下面那条）。
+
+          α     墨区均低   最深低    最深像素          正文墨压在上面
+          0.30     43 级     68 级   rgb(217,216,212)   12.23:1   ← 太淡，第一轮换掉的
+          0.60     80 级    123 级   rgb(183,183,176)    8.63:1
+          0.75     96 级    147 级   rgb(167,166,159)    7.12:1   ← 最后一个过 AA 的档
+          0.82    104 级    156 级   rgb(159,158,150)    6.48:1   ← 定稿（站主「再白一点」）
+          0.89    111 级    166 级   rgb(151,150,142)    5.88:1
+          1.00    122 级    179 级   rgb(139,138,129)    5.01:1
+
+          ⚠⚠ 这张表是**在 `--pleat-contrast=0.5` 之下**量的（对比度已烘进产物）。
+            改对比度会**整张表平移**（压低对比 ⇒ 暗部抬浅 ⇒ 同样的 α 看起来更白）
+            ⇒ **改完对比度必须重量这张表**，别拿旧数当结论。
+            探针：`_probe/_pleat-opacity-ladder.mjs`（量的是已提交的产物，不是重算公式）。
+
+        ★ 定稿后的代价 —— 这一轮有实质改善：正文压在最深褶上 **6.48:1**，
+          **过了 WCAG AA 正文线 4.5**。第一轮站主要的"参考图那个浓度"是 2.91:1；
+          第四轮站主要"再白一点"、第五轮要"再白一点"，两次都顺带把它拉过了 AA。
+          ⇒ 站主要的方向与可读性不冲突，此前那三轮调浓淡才是白调。
+
+        ★ 站主给的预览那张，实测最深 214 级 / rgb(96,96,94) / 正文 2.76:1。
+          ⚠ 那张是**在满对比（contrast=1）下**拍的；现在的环 contrast=0.5，
+            所以**它已经比预览更平、更白** —— 这是站主要的方向
+            （第五轮：「再白一点」；第四轮：「没有那么大明暗对比」）。
+            探针：`_probe/_pleat-contrast-ladder.mjs`。
+          ⚠ 预览那张只有 475px 宽，量之前被我放大到 900 —— **放大会把极值平均掉**
+            ⇒ 预览真实的比 214 更深，真实差距只会比这 2% 大。
+
+        ★ 为什么波纹跟底纹**同档**（0.89 = 0.89），而不是让波纹更深：
+          波纹是**点击时**才出现的，深一档等于"点一下就把整片刷深一次"，
+          而读者在那一刻没有挑浓淡的机会。同档下波纹靠**色相**认出来 ——
+          实测同 α 下波纹色与底纹色的对比是 **1.21:1（最浓处）～1.36:1（最亮处）**
+          ⇒ "颜色变了"这件事本身看得出来；再加上 `PleatWaves` 本来就有的疏密振动，
+          反馈不依赖加深。
+          合法区间是 **[底纹, 底纹+0.05]**（门闩守着），定稿取**下界**。
+
+        ★★ canvas 与静态兜底图**渲染色并不完全相同**，这轮才量出来（之前是推的）：
+          兜底图是 SVG 光栅化，里面 `normal[2] <= 0` 直接**跳过背面**；
+          canvas 不开面剔除，背面片元照画，只是着色器里 `if(!gl_FrontFacing)n=-n;`
+          把法线翻了、于是按正面着色 ⇒ **canvas 的墨区均低比兜底图高约 9%**
+          （α=0.75：105 vs 90 级；α=0.89：119 vs 110 级，两次独立实测一致）。
+          ⚠★ 但**最深那一处反而浅约 2%**（α=0.89：196 级 vs 199 级）——
+            我第一版写成"canvas 深 11%"是拿均低的差**外推**到最深，**推错了方向**。
+            ⇒ 准确说法：**均深峰浅，两头都不一样**；报数时必须说清量的是哪一侧、哪一档。
+          ⚠ 浓淡的**来源**仍然只有这一个 α（结构上不可能分裂）——
+            两侧的差异是**背面处理**带来的，不是多了一个浓淡旋钮。
+
+        ★ 动画**不**改变浓淡（动画只改疏密与色相，不改这个 α），
+          所以深浅只由这行决定，别去相位里找原因。 */
+  --pleat-base: #f2f0e6;
+  --pleat-wave: #a4cfad;
+  --pleat-opacity: 0.82;
+  --pleat-wave-opacity: 0.82;
+  /* 亮暗共用同一薄片细边光，亮色随淡绿波色、暗色单独覆盖为橙色。 */
+  --pleat-fallback-filter: drop-shadow(0 0 2px #a4cfad4d);
+  --pleat-glow: 0.5;
+  /* 跟手光标：亮底保留墨色纱，暗底单独抬亮圆圈描边。 */
+  --cursor-disc-line: #1a1a1a38;
+  --cursor-disc-fill: #1a1a1a14;
+  --cursor-disc-hot-fill: #1a1a1a29;
+  --cursor-dot: #ffffff;
+  --cursor-dot-line: #1a1a1a59;
+  --cursor-ripple: #ffffffe6;
+  --cursor-ripple-line: #1a1a1a40;
+  /* 相册显影板与浮在板上的桌面导航，亮色保持原来的深墨绿。 */
+  --gallery-bath-bg: radial-gradient(110% 70% at 12% 0%, #2d7d462e 0%, transparent 58%), linear-gradient(178deg, #090c0c 0%, #101814 34%, #1a251f 62%, #34413a 100%);
+  --gallery-bath-ink: #ffffff;
+  --gallery-bath-shadow: 0 2px 14px #00000073;
+  --gallery-bath-hint-shadow: 0 1px 8px #00000073;
+  --gallery-topbar-ink: #ffffffc2;
+  --gallery-topbar-emphasis: #ffffff;
+  --gallery-topbar-line: #ffffff24;
+  --gallery-topbar-nav-line: #ffffff38;
+  --gallery-topbar-hot-line: #ffffff8c;
+  --gallery-topbar-current-line: var(--accent-ink);
+  --gallery-topbar-bg: linear-gradient(180deg, #00000042, transparent);
+  --gallery-entry-bg: radial-gradient(110% 70% at 12% 0%, color-mix(in srgb, var(--accent) 18%, transparent) 0%, transparent 58%), linear-gradient(178deg, var(--dusk-1) 0%, var(--dusk-2) 34%, var(--dusk-3) 62%, var(--dusk-4) 100%);
+  /* ★★★ 明暗对比（不是浓淡！）：把薄片的着色**朝着色区间的中点**压缩。
+     站主 2026-10-16：「图二那个没有那么大的明暗对比」—— 要的是**变平**，不是变淡。
+
+        shade' = 0.745 + (shade − 0.745) · k，高光同比例。1 = 原样，0 = 全平。
+        MID 0.745 = (0.43 + 1.06)/2，是现有着色区间的算术中点（结构性常量）。
+
+        ⚠⚠ 为什么必须朝**中点**而不是朝白色（这一版我先写错了）：
+           朝白色只抬暗部、亮部仍顶在纯白 ⇒ 那不是"降对比"而是"整体变淡"
+           —— 实测 k=0.5 时墨区均低从 110 级掉到 **69 级**，墨量被顺带削掉三成。
+           朝中点则亮部一起下来 ⇒ 跨度真收窄，而**中点不动 ⇒ 墨量几乎不变**。
+
+        实测（满屏 1400px · α=0.89 · WCAG 相对亮度 · canvas 那一侧）：
+          k      墨区均低   最深低   最深像素           正文×比   明暗对比比
+          1.00    119 级   196 级   rgb(120,119,115)    3.89:1     1.65  ← 改之前的
+          0.50    120 级   162 级   rgb(154,153,147)    6.09:1     1.35  ← 定稿
+        （"明暗对比比" = 最深低 ÷ 墨区均低，越大越跳。墨量 119→120：**没变**。）
+        要更平往 0.3 走；⚠ 低于 0.25 明暗基本塌平，就不像立体薄片了。
+
+        ★ 与浓淡的分工（这一轮踩过，两个病不能互相顶替）：
+          --pleat-opacity  ⇒ **整体有多少墨**（整体压暗）
+          --pleat-contrast ⇒ **最暗处与最亮处拉得多开**（拉窄）
+          前三轮浓淡调了 0.3 → 1 → 0.75 → 0.89 全在调错的那个。
+
+        ★ 两侧必须同改：`pleated-renderer.ts` 的片元着色器与
+          `gen-pleated-fallback.mjs` 里是**同一条公式**（逐字对应），
+          `tests/about-ref-plate.test.ts` 钉住了"必须成对出现"，
+          并实测 canvas 比兜底图略深（最深处 162 vs 166 级）。 */
+  --pleat-contrast: 0.5;
+  /* 留言页浅水：灰绿阴影与中性反光，强度控制整张波面的峰值。 */
+  --water-shadow: #53645a;
+  --water-light: #ffffff;
+  --water-strength: 0.17;
+  --water-light-gain: 2.6;
+  /* 留言页机械环：亮银外壳与低饱和墨绿光槽，流光收为短小的暖白亮点。 */
+  --ring-plate-opacity: 0.48;
+  --ring-day-filter: hue-rotate(105deg) saturate(0.55) contrast(1.12);
+  --ring-light-halo: #66887580;
+  --ring-light-core: #fffdf8;
+  --ring-light-halo-width: 6px;
+  --ring-light-core-width: 2px;
+  --ring-light-halo-length: 24;
+  --ring-light-core-length: 8;
+  --dur-ring-flow: 24s;
+  /* 单册场景：只由 AlbumScene 使用，不改变旧砖墙与总入口。 */
+  --scene-hud-paper: #fafaf7e6;
+  --scene-photo-paper: #fdfbf5;
+  --scene-paper-edge: 0.55rem;
+  --scene-paper-shadow: 0 0.25rem 0.65rem #1a1a1a1a;
+  --scene-feather: 1.5px;
+  --scene-mobile-title-top: 5.5rem;
+  --scene-control-size: 2.75rem;
+  --scene-status-width: 4.5rem;
+  --scene-button-radius: 0.25rem;
+  --scene-disabled-opacity: 0.5;
+  --scene-title-width: 41.25rem;
+  --scene-display: 7.5rem;
+  --scene-display-long: 5rem;
+  --scene-tracking: -0.055em;
+  --scene-photo-height: 18.75rem;
+  --scene-caption-indent: 4.5rem;
+  --scene-perspective: 1100px;
+  --scene-slice-center-shift: 3rem;
+  --scene-mobile-photo-height: 14rem;
+  --scene-fade-duration: 260ms;
+  /* 颜色（对比度为实测值，见 scripts/assert-tokens.mjs） */
+  --paper: #fafaf7;
+  --ink: #1a1a1a;          /* 对纸 16.64:1 */
+  --muted: #5a5a56;        /* 对纸 6.62:1 */
+  --hair: #d8d5ce;         /* 纯装饰线，不承载文字（对纸 1.4:1） */
+  --accent: #2d7d46;       /* 对纸 4.86:1 —— 换绿后纸上小字也达标（旧橙 3.68 只能大字/图形） */
+  --accent-ink: #266b3b;   /* 对纸 6.18:1 —— 纸上小字专用 */
+  --accent-bright: #4caf50;/* 深色底上的绿：对 --ink 6.26:1（旧橙同位置 5.24）；对纸只 2.66 —— 只许用在深色底 */
+  --accent-wash: #edf3ec;  /* 绿洗底：悬停/激活的浅绿底（原型同名 token，B1 起在站点侧启用） */
+  --panel: #efede7;        /* 抬升面：舱体/面板底色（原型同名 token，B1 起在站点侧启用） */
+
+  /* ── 莱茵 ∞ logo 专用（首屏左上角）──────────────────────────────
+     这两个是**视觉原型 v10 的最终定色**，站主 2026-09-30 明确要求沿用，不换成
+     语义相邻的通用绿。**品牌标识的色相偏差一眼可见**，所以这里不当普通 token 归并。
+     它们跟上面那批通用绿的区别：
+       · 极淡（接近白），是「深墨绿场上的浅色描边 + 一层极淡绿锃」的观感，不是为了对比度达标；
+       · 只服务于一个 mask 图形，**不承载任何文字** ⇒ 不适用 4.5:1 文字规则。
+     要整体微调这个 logo 的观感，改这两个值即可，不必碰别处。 */
+  --logo-ink: #e9efe9;     /* logo 主体：极淡绿白（原 -.lg-base 的 background） */
+  --logo-glow: #8fe0b0;    /* 静态轮廓光：极淡薄荷绿（原 -.lg-glow 的 background，配 opacity:.18） */
+
+  --on-band: #ffffff;      /* 黑带上 17.4:1 */
+  --on-band-sub: #dedede;  /* 黑带上 12.94:1 */
+  --on-band-meta: #b4b4b4; /* 黑带上 8.39:1 */
+  --footer-bg: var(--ink);
+  --footer-meta: var(--on-band-meta);
+  --footer-link: var(--on-band-sub);
+  --footer-value: var(--on-band);
+  --footer-hover: var(--accent-ink);
+  --social-icon-fill: #000000;
+  --jelly-tip-light: #ff7313;
+  --jelly-tip-dark: #266b3b;
+  --code-bg: #0e0e0e;
+  --code-fg: #ededed;      /* 对代码底 16.49:1 */
+  --code-inline-bg: #f2f1ef; /* 行内代码底色（装饰，文字仍是 --ink） */
+  --code-rule: #333333;    /* 工具栏与代码块之间的分隔线（装饰线） */
+  --code-btn-line: #4a4a4a;
+  --code-btn-bg: #242424;
+  --code-keyword: #6fcf8f; /* 代码里唯一的强调色；对 --code-bg 实测 10.11:1（旧橙 #ff8a66 是 8.35） */
+
+  /* 光标 token 不在这里：它们在 src/styles/cursors.css（**构建期生成**，因为 URL 必须带图片内容指纹，
+     否则改了图浏览器还会用缓存里的旧光标 —— 站主 2026-09-26 就撞上过这个）。
+     生成器 scripts/gen-cursors.mjs 同时产出图片、热点与这两个文件里的一致性。 */
+
+  /* 字号（11 档） */
+  --fs-display: clamp(2.8rem, 13vw, 8.5rem);
+  --fs-title: clamp(1.9rem, 1.1rem + 3.6vw, 3.8rem);
+  --fs-item: clamp(1.6rem, 1rem + 4.2vw, 3.4rem);
+  --fs-h2: clamp(1.45rem, 1.05rem + 1.5vw, 2.1rem);
+  --fs-h3: clamp(1.15rem, 1rem + 0.7vw, 1.4rem);
+  --fs-lg: 1.375rem;
+  --fs-lede: 1.125rem;
+  --fs-body: 1.0625rem;
+  --fs-sm: 0.875rem;
+  --fs-xs: 0.8125rem;
+  --fs-mono: 0.85rem;
+
+  /* 行高 */
+  --lh-display: 0.9;
+  --lh-title: 1.02;
+  --lh-item: 1.03;
+  --lh-heading: 1.18;
+  --lh-body: 1.75;
+
+  /* 字距 */
+  --ls-display: -0.045em;
+  --ls-title: -0.035em;
+  --ls-item: -0.032em;
+  --ls-h2: -0.012em;
+
+  /* 间距（4px 基准，8 档） */
+  --sp-1: 0.25rem;
+  --sp-2: 0.5rem;
+  --sp-3: 0.75rem;
+  --sp-4: 1rem;
+  --sp-5: 1.5rem;
+  --sp-6: 2rem;
+  --sp-7: 3rem;
+  --sp-8: 4.5rem;
+
+  /* 版心 */
+  --wrap: 82rem;
+  --measure: 34em;
+  /* 文章桌面双栏：约1100px内容组，正文约43个中文字符，侧栏256px。 */
+  --post-measure: 46rem;
+  --post-rail-width: 16rem;
+  --post-rail-gap: 4rem;
+  /* 云端写作台：文字编辑的独立尺寸，不引入站点装置。 */
+  --writer-sidebar: 15rem;
+  --writer-editor-height: 28rem;
+  --writer-editor-mobile-height: 22rem;
+  --writer-compare-height: 14rem;
+  --writer-image-card: 13rem;
+  --writer-image-height: 9rem;
+  --gutter: clamp(1rem, 4vw, 3rem);
+  --band-h: min(74vh, 42rem);
+
+  /* 动效（B2 2026-09-26 落 token，取值见 docs/rhinelab-spec.md §1.2）
+     分四层，**不要用一套时长打天下**：交互层要快（120/180ms），叙事层慢（640ms），
+     循环层 linear，光标/闪烁是硬切（steps）而不是呼吸灯。 */
+  --dur-fast: 120ms;                               /* 交互层：悬停 / 焦点 / 按压 */
+  --dur-enter: 640ms;                              /* 叙事层：区段入场 / 逐层展开（320 → 640） */
+  --dur-stagger: 320ms;                            /* 错位：逐条展开之间的 delay */
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);           /* 叙事层主曲线 */
+  --ease-interact: cubic-bezier(0.22, 1, 0.36, 1); /* 交互层曲线（与叙事层分开，别混用） */
+  --dur-orbit: 8s;                                 /* 循环层基准时长（4/8/16s 按元素体量选） */
+  --dur-blink: 800ms;                              /* 硬切闪烁（配 steps(1)，不是淡入淡出） */
+  --focus-min: 0.65;                               /* 扫描带聚焦时，带外条目的弱化值 */
+
+  /* 首页开场动画（2026-09-30 第八版：**开场那批线就是首屏那批线**，不再是两套）。
+     这里放**整条时间轴**，不只是总时长 —— 因为首屏（src/pages/index.astro）现在要消费它：
+     揭幕怎么长、揭帘什么时候开、逐字什么时候滑，全走下面这组变量。
+     放进 BootIntro.astro 会造成「index.astro 依赖兄弟组件的 <style>」这种隐形耦合。
+     ★ 只有 --dur-boot* 是设计决定（参考站 wodniack.dev 实测 5.0 s）。
+       ★ 上限沿革：站主 2026-09-30 定 **5.3 s** ⇒ 2026-10-01 亲自授权放宽到 **6.0 s**
+         （原话「动画可以延长一秒在无限符号出来的时候」）。再要动请先问站主。
+       其余 --bi-* 是同一份时间轴的段落起止，改一处 —— 覆盖层、首屏交接、手机版一起走。
+     ★ 旧 token --dur-boot-out / 旧那套 20160ms 逐帧复刻版一起删了，别加回来。 */
+  --dur-boot: 5750ms;      /* 全量版总长（遮罩撤走 = 可交互时刻）。必须 ≥ 最后一个字落位
+                              （5550ms）—— 提前撤会**切掉还在跑的逐字动画**（close() 会摘掉
+                              .boot-on，那条门控动画随之消失）。 */
+  --dur-boot-mini: 1500ms; /* 手机（≤767px）极简版：同一套关键帧、压缩时间轴 */
+
+  /* 开场时间轴 · 全量版。★ 改一个要顺着看后面几段 —— 段落**首尾相接或故意重叠**是设计：
+       落笔 180 → 2330   ∞ 一笔画完（★ 2026-10-01 站主：绘制过程 1150 → 2150）
+       溶解 2250 → 2950  ∞ 淡出（与剪幕重叠）
+       剪幕 2450 → 3400  暗场上下对开，最后收成**中间一条线**
+       揭幕 3400 → 4600  那条线长成一片线（+ 最多 ~310ms 从两端向中间的错峰）
+       揭帘 4150 → 5100  .band-copy 的 clip-path
+       逐字 4400 → 5550  640ms + 30ms/字（站名 18 字 ⇒ 最后一个字落在 ~5550）
+       撤幕 5750         .bi-clock 的 animationend → close()
+     ★ 落笔那 +1000ms 之后，**后面每一段都跟着 +1000** —— 段与段之间的相对关系一动没动：
+       溶解仍在画完前 80ms 起步、揭幕起点仍**正好等于**剪幕终点。改时长时别只改一处。
+     ★★ 揭幕的起点 3400 **刻意等于剪幕的终点**：幕布收成一条线的那一刻，正是那条线
+        开始长成一片线的时刻 —— 接上就是这么发生的。早一点（试过 1500）会变成"线在幕布
+        后面就长完了，只有揭幕没有生长"：观感退化成普通的开帘。
+     ★ --bi-bloom / --bi-bloom-at 同时被 index.astro 的 @keyframes rh-field / rh-bloom 消费
+       （那是首屏线自己的揭幕动画）。
+     ★ --bi-total 必须存在：.bi-clock 的 `animation: bi-clock var(--bi-total)` 靠它生效，
+       走完这一条才触发 animationend ⇒ close()（撤遮罩 + 解锁滚动 + 交焦点）。
+       值无效时整条声明作废 ⇒ 时钟不跑 ⇒ 只剩脚本里 8s 的兜底，遮罩会多挂 3.5 秒。
+       （2026-09-30 第八版实测踩到：把时间轴搬进 tokens 时漏了这个。） */
+  --bi-total: var(--dur-boot);
+  --bi-draw-at: 180ms;      --bi-draw: 2150ms;   /* 落笔（★ 2026-10-01 起 2150，原 1150） */
+  --bi-mark-out-at: 2250ms; --bi-mark-out: 700ms; /* 溶解 */
+  --bi-wipe-at: 2450ms;     --bi-wipe: 950ms;    /* 剪幕 */
+  --bi-bloom-at: 3400ms;    --bi-bloom: 1200ms;  /* 揭幕（前 45% 横向展开、后 55% 长高） */
+  --bi-copy-at: 4150ms;     --bi-copy: 950ms;    /* 揭帘 */
+  --bi-ch-at: 4400ms;       --bi-ch: 640ms;      /* 逐字 */
+  --bi-ch-step: 30ms;                            /* 逐字错峰（每字） */
+  --bi-k: 1;                                     /* 错峰倍率：手机版压到 0.02 */
+
+  /* 橙信号（B2 起启用，唯一用途：HUD 扫到新区段时瞬时变色，160ms 后复原）
+     对比度为实测值：--signal 对纸只 2.83:1 → **图形色，不许承载任何文字**；
+                     --signal-text 对纸 4.80:1 → 纸上小字可用（scripts/assert-tokens.mjs 守着）。 */
+  --signal: #e87722;
+  --signal-text: #b45309;
+
+  /* 背景装饰层（B2）：纯装饰，不承载任何信息，因此**不进对比度断言表**。
+     用 8 位 hex 承载 alpha，而不是在组件里写 rgba() 字面量 —— 颜色只许住在 tokens.css。 */
+  --deco-ring-line: #1a1a1a12;    /* 同心扫描环的线（--ink @ 7%） */
+  --deco-wash-green: #2d7d460b;   /* 底部极淡绿底（--accent @ 4.5%） */
+  --deco-orbit-strong: #2d7d4638; /* 环绕行圆环：外环上沿（--accent @ 22%） */
+  --deco-orbit-soft: #2d7d4617;   /* 环绕行圆环：外环右沿（--accent @ 9%） */
+  --deco-orbit-inner: #2d7d462e;  /* 环绕行圆环：内环下沿（--accent @ 18%） */
+
+  /* ===== 标签页装置「准星 CROSSHAIR」：示波器十字光标（2026-10-06）=====
+     纯装饰、不承载任何信息 ⇒ **不进对比度断言表**（与上面那批 --deco-* 同规矩）。
+     ★ 为什么不是 --accent-bright(#4caf50)：token 注释明写它对纸白只有 **2.66:1**、
+       "只许用在深色底"；而本页是纸白底 ⇒ 只能用 --accent(#2d7d46, 对纸 4.86:1)。
+     ★ 站主要的"**亮**淡绿"靠 **alpha** 压淡实现（8 位 hex 承载），
+       不是换一个更亮的色相 —— 换色相会破掉全站"纸白区只有一族绿"。
+     ★★ 线的 alpha 40% 是**量出来的**（2026-10-06，`_probe/_tags-shot.mjs` 出图后
+        在准星那条横带上取像素）：22%（= --deco-orbit-strong 的档）渲染成
+        rgb(205,222,207)，对纸白只有 **1.35:1** —— 和矩阵的 `--hair` 格线一样淡。
+        但这两者的**角色不同**：格线是静态装饰，准星是**跟着指针走的交互反馈**，
+        淡到与格线同档就"看不出它在响应你"。40% 渲染成 rgb(168,200,176)（1.66:1），
+        仍然是"淡绿"、仍远在文字对比度门槛之外，但一眼能看见它在动。
+        ⚠ 别再加到 60% 以上：那是"深绿实线"，就不再是"淡绿准星"了（站主原话）。 */
+  --deco-crosshair-line: #2d7d4666;  /* 十字线（--accent @ 40%） */
+  --deco-crosshair-dot: #2d7d46b3;   /* 焦点环（--accent @ 70%） */
+
+  /* ===== 404 页装置「裂痕 FRACTURE」：玻璃上的裂纹（2026-10-07 第三版）=====
+     纯装饰、不承载任何信息 ⇒ **不进对比度断言表**（与上面那批 --deco-* 同规矩）。
+     ★★ 为什么是**中性灰**而不是站上那族绿（2026-10-06 第二版，站主原话「裂纹用半透明的线，
+        别用绿线」）：第一版顺手用了 `--accent` @60%（全站装置都是绿的），
+        但**玻璃裂纹不是绿的** —— 它是纸面上的一道**暗缝**：比纸白暗、不带色相。
+        ⇒ 换成 `--ink`(#1a1a1a) 压 alpha。这是**唯一**一处不跟全站绿族的装置色，
+          理由写在观感上而不是审美上（色相会让人把它读成"又一台绿装置"）。
+     ★★ 为什么是**四道**而不是三道（2026-10-07 第三版，站主要「玻璃质感的真实裂痕」）：
+        第二版的裂纹是"一根线 + 一圈柔光"，出图一看还是**铅笔划痕**。
+        查了画碎镜子的教程，口径一致：玻璃有厚度，砸开之后**断面朝向不同** ——
+        一侧背光成**暗缝**，另一侧迎光出**亮边**（教程里叫 Dark Edge）。
+        ⇒ 现在的裂纹是这么叠出来的（顺序就是这里的顺序）：
+          ① `band`  宽而淡的**裂口暗带**（裂口的"厚"）
+          ② `line`  细而浓的**暗缝**，朝背光侧偏 ~0.95px
+          ③ `light` **亮芯**，朝迎光侧偏 ~0.9px —— 语义是"裂口里透出来的光"，
+             所以它的颜色是**纸色**（读 `--paper`）而不是 ink。
+        ④ `ghost` **未揭示的整张网**（站主要「本来就在上面，类似下面的图层」）。
+      ★ 顺带修掉上一轮交付时留下的一个问题：**压在深色页脚带上的裂纹看不见**
+        （近黑的线压在深色上自然显不出来）。有了亮芯就不一样 —— 深色底上反而是
+        那根亮边最清楚，正好是"玻璃裂口反光"的样子。
+      ★ 全页**只有一支光**（左上），所有裂纹的亮/暗边朝向一致（朝向乱飞就是贴图）。
+        改观感先调 alpha 与宽度，再调那两个偏移量（在脚本里：OFF_LINE / OFF_LIGHT）。 */
+  --deco-fracture-band: #1a1a1a14;   /* 裂口暗带（--ink @ 8%），最宽，垫在最下面 */
+  --deco-fracture-line: #1a1a1a38;   /* 裂纹暗缝（--ink @ 22%），细而浓，偏背光侧 */
+  --deco-fracture-light: #fafaf799;  /* 裂口亮芯（--paper @ 60%），偏迎光侧 —— 玻璃的"厚" */
+  --deco-fracture-ghost: #1a1a1a0d;  /* 未揭示的整张网（--ink @ 5%）：指针还没碰到的部分 */
+  /* 螺旋盘放大片的"保护层"（2026-10-09 §6.66）：--paper @ 2/255 —— **不是装饰、本意就是看不见**。
+     它只为让合成器把放大片 1.9 倍的整块范围算进重绘区（全透明会被跳过，所以不能是 00）。
+     叠在纸上差 0；叠在身后邻片上最多差 2 级。 */
+  --paper-ghost: #fafaf702;
+
+  /* ===== 文章页底纹：工程方格 + 页边刻度轨（2026-10-03 站主在 9 个母题里拍板 #7）=====
+     纯装饰、不承载任何信息 ⇒ **不进对比度断言表**（与上面那批 --deco-* 同规矩）。
+     用 8 位 hex 承载 alpha，而不是在组件里写 rgba() —— 颜色只许住在 tokens.css。
+     ★ 两个 alpha 是**站主选的强度档**（回话原字：「8%」）。它们不是新拍的数：
+       是实验台（`dist/_plate-lab.html`，强度滑杆 = 1.00 那一档）的**实际渲染值**，
+       站主对着那张图定的就是这一档 ⇒ 照抄，不"优化"。
+       要改观感只改这两个数（或 --deco-plate-u 的密度），**别改配方**
+       （几族线、粗格 = 细格 × 6、轨宽 16px 这些关系是母题 #7 的定义）。 */
+  --deco-plate-fine: #2d7d460f;   /* 细格线（--accent @ 6%）：方格纸的淡线 */
+  --deco-plate-coarse: #2d7d4614; /* 粗格 + 页边刻度轨（--accent @ 8%） */
+  /* 方格的基本单位。粗格 = 8px × 6 = 48px、刻度轨小齿 2u / 大齿 10u —— 6 倍与 2/10
+     的关系是配方的一部分，改 --deco-plate-u 会同时缩放它们（这是有意的）。 */
+  --deco-plate-u: 8px;
+
+  /* 墨滴母题的墨色（留言页底纹 + 墨滴装置共用）。2026-10-06 立，2026-10-08 由**蓝改墨绿**。
+     ★ 为什么需要它：它是**这张底纹**的墨色，取自素材实测 —— 底纹与墨痕/墨滴必须同色系，
+       否则"底纹一个色、滴下去另一个色"⇒ 读成两种东西。
+     ★ 来历：原图是站主给的**蓝色钢笔 ∞**（实测不透明区均值 rgb(105,129,183)）。
+       2026-10-08 站主：「背景那个**蓝色**的无限符号改为**墨绿色**，墨痕和发留言的墨滴也改成墨绿色」
+       ⇒ 底纹按 `_probe/_gb-plate-recolor.mjs`（亮度→墨绿色阶；色阶与**日志页底纹同源**，
+         所以站上两处 ∞ 是同一个绿）重出，本 token 同步改为重出后的实测值。
+     ★ 取值口径没变（仍是"素材实测、未去饱和、未偏移"），变的只是素材的颜色：
+       alpha>200 的均值 rgb(47,119,65) —— 与 --accent(#2d7d46) 同族，但它是**量出来的**，
+       不是把 --accent 抄过来（抄过来的话底纹一改它就悄悄对不上了）。
+     ★ 名字里的 "blue" 已不成立 ⇒ 现名 `--ink-motif`（母题的墨色）。 */
+  --ink-motif: #2f7741;
+  /* @deprecated 旧名（2026-10-06 → 2026-10-08）。保留定义并标注、不直接删
+     （按 spec §1 的改名/弃用约定）—— **本仓已无消费者**，新代码用 `--ink-motif`。 */
+  --ink-blue: var(--ink-motif);
+
+  /* ⚠️ 2026-09-30：下面三个 token 已**没有消费者** ——
+     站主拍板「内页套原型正文区语言」后，内页的「切片档案」背景母题
+     （等距发丝横线 + 底部绿洗 + 右下切片素材 + 纸色遮罩）整体删除，
+     换成了原型 v10.6 的百褶 ∞ 底纹（`/art/inf-orig.webp`，与首页同一张）。
+     按 spec §1 的「改名 / 弃用」约定，**保留定义并标注**而不是直接删 ——
+     它们是可复算的对比度依据（尤其 scrim 那个数），删了以后要考古就得翻 git。
+     真要清理时，连同 `public/bg-slice.webp` 一起删。 */
+  /* @deprecated 无消费者（2026-09-30 起）：等距切片线（--ink @ 4.3%） */
+  --page-grid-line: #1a1a1a0b;
+  /* @deprecated 无消费者（2026-09-30 起）：底部淡绿带（--accent @ 4.5%） */
+  --page-wash-green: #2d7d460b;
+  /* @deprecated 无消费者（2026-09-30 起）：切片照片上的纸色遮罩不透明度。
+     取值是算出来的，不是拍的：实测（_tmp-p3-scrim.mjs，2026-09-26）切片最暗像素
+     rgb(153,153,140)，α=0 → --muted 压其上 2.40:1；α=0.10 → 2.72:1；
+     p5 分位则从 4.47 → 4.65:1 过 AA 线。取站主要求区间（5–10%）的上限。 */
+  --page-slice-scrim: 0.1;
+
+  /* 身份舱里那四个中文大字的水印色（站主 2026-09-26：做成小字太扎眼 → 沉成背景水印）。
+     **用 8 位 hex 承载 alpha（--ink @ 6%）**，而不是在组件里写 `opacity: var(...)` ——
+     实测踩过：`opacity` 的变量若没解析成功会回落到初值 1（全不透明），
+     结果是实心黑水印压在正文上；alpha 写进颜色则最差也只是颜色不对、不会变成不透明。
+     纯装饰、不承载信息（同样的站名在 OS 状态条与坐标行都已有），所以不进对比度断言表。 */
+  --deco-identity-ink: #1a1a1a0f;
+
+  /* ===== v10.6「玻璃质感」层（2026-09-30 站主要求：首页视觉换成 rhine v10.6 最终版）=====
+     来源是原型 nc-rhine-v7/index.html 的那组 glass token，逐个搬到站点侧。
+     **为什么单开一层而不是塞进上面**：上面那批是「纸面/档案」用的（内页外壳），
+     这一批是「深墨绿场 + 玻璃浮起」用的（首页首屏与卡片）。两者底子不同：
+       浅色底 → 玻璃要往白里透（#ffffff5c）
+       深色底 → 玻璃要往白里透得更少、边界发白（--dglass-line）
+     所以不能共用一组值，否则总有一边是脏的。 */
+
+  /* 深墨绿场（首屏）。v4 起就是这套，v10.6 沿用 —— 与 --paper 是同一套体系的两端：
+     场地是深绿、纸面是暖白，中间靠晨昏带过渡。 */
+  --dusk-1: #0b100e;   /* 最深：顶部 */
+  --dusk-2: #131b17;   /* 主体 */
+  --dusk-3: #1e2a23;   /* 抬升：玻璃窗所在的亮部 */
+  --dusk-4: #3a4740;   /* 晨昏带上缘 */
+  --dusk-5: #6d7a70;   /* 晨昏带中段（暖灰绿） */
+  --dusk-6: #c8ccc2;   /* 晨昏带下缘（灰白） */
+
+  /* 浅色底的玻璃（纸面上的卡片、条目悬停）
+     **8 位 hex 承载 alpha**，与上面 --deco-* 同一约定：不在组件里写 rgba()。 */
+  --glass-bg: #ffffff5c;      /* 常态玻璃底 */
+  --glass-bg-hot: #ffffff96;  /* 悬停：更实一点，压住下面的肌理 */
+  --glass-line: #1a1a1a14;    /* 玻璃边框（--ink @ 8%） */
+  --glass-blur: 10px;
+  --glass-blur-hot: 18px;
+  --glass-shadow:
+    0 1px 2px #1a1a1a0a,
+    0 8px 28px -12px #1a1a1a24;
+
+  /* 深色底上的玻璃边框（首屏那几片玻璃窗） */
+  --dglass-line: #ffffff1f;
+
+  /* ===== 暗底玻璃 dark-glass（2026-10-15，灯箱的上一张/下一张）=====
+     ★★ 为什么要在 `--glass-*` 之外**另立一组**，而不是直接复用上面那组：
+        上面那组是**亮底**玻璃（白玻璃 36% + 暗色发丝边）—— 压在纸白上正好，
+        压在灯箱那层 `rgb(26 26 26 / 92%)` 的暗幕上会糊成一片白。
+        ⇒ **α 不可移植，渲染浓度才可移植**：同一个 #ffffff 在两种底色上是两件事。
+     配方来自 willowxi.site 相册页那个玻璃按钮的**「简易版」**（作者自己在源码里标了
+     「简易版；用户说后期会换样式」）。那边是暗色主题，这边是纸白，所以只借结构、
+     数值按本站 token 重算（下面是换算表，不是照抄）：
+         参考站 rgba(255,255,255,.07)  → #ffffff12   常态玻璃底
+         参考站 rgba(255,255,255,.13)  → #ffffff21   悬停（压住下面的照片肌理）
+         参考站 inset 0 1px 0 rgba(255,255,255,.55)   → 上缘亮边
+         参考站 inset 0 -1px 0 rgba(255,255,255,.18)  → 下缘暗边
+         参考站 inset 0 12px 20px -12px rgba(255,255,255,.30) → 内侧柔光
+         参考站 blur(14px) saturate(180%) → 模糊档（本站另有一组更轻的 --glass-blur）
+     ⚠ **刻意不抄参考站的最终版**：那边的玻璃最终由 **WebGL 后处理**画，
+        CSS 末尾用 `!important` 把 DOM 玻璃整个摁掉了（原因：按钮被做了两遍玻璃，
+        右端出现缺口/菱形）。本站 `SpiralPlate.astro` 开头明写不引 WebGL 的三条理由，
+        `tests/build-output.test.ts` 也有断言整页不许出现 three ⇒ 走"简易版"。
+     ★ 用法：只许落在**深色底**上（灯箱）。纸白底上用这一组等于没画。 */
+  --dark-glass-bg: #ffffff12;
+  --dark-glass-bg-hot: #ffffff21;
+  --dark-glass-line: #ffffff8c;   /* 上缘亮边：玻璃感的主要来源，下缘另配一条暗边 */
+  --dark-glass-line-low: #ffffff2e;
+  --dark-glass-glow: #ffffff4d;
+  --dark-glass-drop: #1a1a1a66;  /* 玻璃落在照片上的投影（--ink @ 40%）；不许组件里写字面色值 */
+  --dark-glass-blur: 14px;
+  --dark-glass-sat: 180%;
+
+  /* 玻璃层的动效时长 —— 与上面的 --dur-fast(120ms)/--dur-enter(640ms) **刻意分开**：
+     玻璃浮起要"慢半拍"，太快就没有"重量感"，这是 v10.6 的观感来源之一。 */
+  --dur-hover: 260ms;
+  --dur-card-expand: 420ms;
+  --dur-card-collapse: 280ms;
+  --dur-card-switch: 180ms;
+  --ease-glass: cubic-bezier(0.32, 0.72, 0, 1);  /* 起步快、收尾极缓 —— 玻璃位移专用 */
+
+  /* ===== 全站 hover 统一基线（2026-10-03 站主：「把本站所有鼠标悬停的效果
+     都改成主页那样」）=====
+     摸底结论：首页的 hover 语汇是三件套 ——
+       ① 时长/曲线 = `--dur-hover` (260ms) + `--ease-interact`
+          ★ 注意首页自己也不完全统一：`.entry a` 用 --ease-interact，
+            而 `nav a::before` 那道扫光用 --ease-glass。
+            这里取**交互层那条**（--ease-interact）作为全站基线，
+            因为它服务的是「元素被点亮」这件事，与导航/正文/列表都同性质。
+       ② 形态 = 位移很轻（nav 上浮 2px、entry 右移 6px）+ 边线变色
+       ③ 都有 `transition`，**没有一条是瞬变的**
+     ⇒ 此前内页（Topbar 之外的页脚、目录、正文链接、社交列表、标签页…）
+       的 hover **完全没有 transition**，颜色是「啪」一下跳的 ⇒ 这就是
+       「跟主页不一样」的实际来源，**不是颜色不同，是没有过渡**。
+
+     --hover-lift / --hover-nudge：位移幅度。
+       顶部导航/标签这类密集小件用 --hover-lift（上浮 2px），
+       卡片/列表条目用 --hover-nudge（横向 6px），与首页一一对应。
+     ★ 幅度刻意小：2~6px 是首页量过的值，别自己加大。 */
+  --hover-lift: -2px;      /* 导航类小件：上浮 */
+  --hover-nudge: 6px;      /* 卡片/条目：横向轻推 */
+
+  /* ===== 原型 v10.6 最终版补充层（2026-09-30 站主拍板「统一换成视觉原型」）=====
+     上面那批玻璃 token 已经从原型搬过来了，这里补齐原型剩下、站点还没有的几项。
+     **值全部抄原型 :root，一个不自创** —— 站主这次的配色要求原话是
+     「用我博客风格的颜色，绿色全色系，黑，白，灰和少量橙色系」，
+     而原型那套本来就是从本站 tokens 抽出去的，所以搬回来天然一致。 */
+
+  /* 墨色别名。原型的过渡（pt-ink 墨色浸染层）与深场描边写的是这几个名字，
+     站点此前没有 —— 缺了会让 stroke/color 静默失效（无 fallback 时整条声明被丢弃）。
+     --ink-deep 是过渡墨块的底色；--on-ink 是它上面的前景字（进对比度断言表）。 */
+  --ink-1: #16241e;      /* 主墨色（深场上的亮字另用 --on-band） */
+  --ink-2: #5f6b64;      /* 次级墨色：描边、网格线 */
+  --ink-deep: #0b1a14;   /* 过渡墨块底色 */
+  --visitor-backdrop: var(--ink-deep); /* 亮色访客弹窗保持原墨色遮罩 */
+  --on-ink: #f2f4f1;     /* 深墨块上的前景字 */
+
+  /* 过渡总时长（站主 2026-09-30 拍板：换原型 900ms「墨色浸染」，
+     替掉站点原先 2200ms 四段那套）。原型的时序是错配的：入 240 / 驻留 320 / 出 340，
+     等长读起来机械，错配才有惯性 —— 所以这里只给总时长，各段比例写在 transition.css。 */
+  --pt-sweep: 900ms;
+  /* 亮色转场：墨绿浸染与浅色描边，绿色读数线在深底上保持清楚。 */
+  --pt-ink: #0b1a14;
+  --pt-edge: #16241e;
+  --pt-letter: #f2f4f1;
+  --pt-accent: #4caf50;
+}
+
+/* 开场时间轴 · 手机极简版（≤767px，1.5 s）。
+   ★ 刻意**整体覆写同一组变量名**、不另写一套关键帧 —— 两版共用一份 CSS，
+     才不会出现"改了桌面版、手机版还是老样子（或者反过来）"。
+   ★ 手机不做揭帘 / 逐字（那两条在 index.astro 里就是 `:not(.boot-mini)` 门控的）。 */
+html.boot-mini {
+  --bi-total: var(--dur-boot-mini);
+  --bi-draw-at: 60ms;       --bi-draw: 620ms;
+  --bi-mark-out-at: 560ms;  --bi-mark-out: 260ms;
+  --bi-wipe-at: 600ms;      --bi-wipe: 340ms;
+  --bi-bloom-at: 940ms;     --bi-bloom: 460ms;
+  --bi-copy-at: 900ms;      --bi-copy: 300ms;
+  --bi-ch-at: 900ms;        --bi-ch: 300ms;
+  --bi-ch-step: 4ms;
+  --bi-k: 0.02;
+}
+
+/* ===== 深色模式 · 初版（2026-10-17，随 Jelly Slider 主题切换按钮落地）=====
+   ★ 状态：**初版、待站主细化** —— 按钮的机械部分（`dark` 类 + localStorage +
+     首帧防闪）先行，深色视觉只给了第一版能看的映射。站主做正式深色设计时，
+     逐条替换这里的值即可，契约（类名 / 键名）不变。
+   ★ 取值策略：**只复用本站已有的深场 token**（--dusk-* / --on-* / --dark-glass-*），
+     不发明新色相 —— 深色底的"纸"就是 --dusk-2（首页深墨绿场的主体），
+     深色底的"墨"就是 --on-ink。数值后都标了在 #131b17 上的实测对比度
+     （公式与 scripts/assert-tokens.mjs 同源）。
+   ★ 故意没动的：--on-band*（深色带本来就是深的）、--code-bg/fg（代码块本来就是深的）、
+     --dusk-*（深场在深色模式里还是深场）、动效/字号/间距（与明暗无关）。
+   ★ 已知待办（站主做正式版时处理）：百褶 ∞ 底纹（/art/inf-orig.webp）是按纸白出的，
+     深底上会显脏 —— 届时要么重出一张深底版、要么在 html.dark 里降它的 opacity。 */
+/* ★★★ 2026-10-18 站主定案：暗色模式从「黑 + 墨绿」改成「黑 + 橙」，
+     亮色模式**完全不动**（仍是纸白 + 墨绿）。
+     这与引入的 rhine-lock 立体 ∞ 的原版配色一致 —— 原版就是
+     「亮=纸白 (0.925,0.918,0.902) / 深=石墨黑 (0.043,0.043,0.047) + 橙辉光 (1.0,0.482,0.0)」。
+     ★ 底色 #0b0b0c = PAPER_DARK 按 sRGB 换算（0.043/0.043/0.047 → 11/11/12），
+       不是纯黑：原版偏冷一点，纯黑会把它压掉。
+     ★ 所有前景色换黑底后对比度只**升**不降（底更暗），逐个实测见注释。
+     ⚠ 下面几项是**同一批改的**：--panel / --code-inline-bg / --hair / --accent-wash
+       原本是深墨绿系（#1c2822 等），配深绿底才分得开；换黑底后与#0b0b0c
+       只差1.1~1.3:1 ⇒ 「面板浮起来」的层次会塌。所以这几项**同时提到中性灰阶**，
+       而不是留着不管（留着 = 深色模式下所有面板/代码块糊成一片）。
+     ⚠ 这一改动与 tokens.css 第 464 行记的站主原始要求（「绿色全色系，黑白灰和少量橙色系」）
+       不同：那是**亮色**的要求，本次只改暗色，亮色一行未动。 */
+html.dark {
+  /* 百褶底纹采用低饱和铜橙，保留原图的褶皱明暗。 */
+  --pleat-dark-filter: grayscale(1) sepia(1) saturate(2.2) hue-rotate(-18deg) brightness(0.85) contrast(1.05);
+  --pleat-dark-opacity: 0.25;
+  /* 墨迹和月相只换色阶，透明边缘与笔触深浅仍来自原图。 */
+  --ink-plate-dark-filter: grayscale(1) invert(1) brightness(0.65) sepia(1) saturate(3) hue-rotate(-20deg);
+  --links-plate-dark-opacity: 0.17;
+  --links-plate-dark-mobile-opacity: 0.12;
+  --talks-plate-dark-opacity: 0.16;
+  --gallery-inf-dark-opacity: 0.16;
+  --log-inf-dark-opacity: 0.16;
+  /* 首页主场、相册显影板和交接幕共用同一组橙色与停靠点。 */
+  --home-hero-1: #eb6100;
+  --home-hero-2: #f56800;
+  --home-hero-3: #ef6100;
+  --home-hero-4: #e85c00;
+  --gallery-bath-bg: linear-gradient(178deg, var(--home-hero-1) 0%, var(--home-hero-2) 34%, var(--home-hero-3) 62%, var(--home-hero-4) 100%);
+  --gallery-entry-bg: var(--gallery-bath-bg);
+  --cursor-disc-line: #ffb570a6;
+  --cursor-disc-fill: #ed8c3b14;
+  --cursor-disc-hot-fill: #ed8c3b2e;
+  --cursor-ripple: #ffc082d9;
+  /* 夜间原图保留金属反射，微光沿用原版橙晕与暖白光芯；水波采用低亮度琥珀反光。 */
+  --ring-plate-opacity: 0.72;
+  --ring-light-halo: #ffb0408c;
+  --ring-light-core: #fff6ea;
+  --ring-light-halo-width: 9px;
+  --ring-light-core-width: 3px;
+  --ring-light-halo-length: 48;
+  --ring-light-core-length: 28;
+  --water-shadow: #44362e;
+  --water-light: #d78d54;
+  --water-strength: 0.20;
+  --water-light-gain: 1.25;
+  --pt-ink: #090807;
+  --pt-edge: #754324;
+  --pt-letter: #ffc38b;
+  --pt-accent: #ed8c3b;
+  --paper: #0b0b0c;       /* = rhine-lock PAPER_DARK：近黑略偏冷（不是纯黑） */
+  --visitor-backdrop: #000000; /* 暗色访客弹窗用中性黑，避免整页染绿 */
+  --ink: #f2f4f1;         /* = --on-ink：深底前景字（**17.79:1**，旧深绿底上 15.86） */
+  --muted: #a9b4ac;       /* 深底次级字（**9.19:1**，旧 8.20） */
+  --hair: #2f2f31;        /* 深底发丝线（1.60:1）★ 原 #2b352e 是墨绿，黑底上偏绿 ⇒ 改中性灰 */
+  /* ★ 强调色：绿 → 橙。取 rhine-lock 原版的 #ff7b00（辉光橙）——
+     实测对 #0b0b0c 是 7.57:1，比原来的绿（7.08:1）还高一点，不用另调色。 */
+  --accent: #ff7b00;      /* 深底专用橙（**7.57:1**）★ 原绿 #4caf50 */
+  --footer-bg: #cf681c;   /* 暗色页脚：更深的橙，保留深色文字的对比度 */
+  --footer-meta: var(--paper);
+  --footer-link: var(--paper);
+  --footer-value: var(--paper);
+  --footer-hover: var(--paper);
+  --social-icon-fill: var(--accent-ink);
+  --accent-ink: #ffb570;  /* 深底上的亮字橙（**11.33:1**）★ 原浅绿 #8fe0b0 */
+  --accent-wash: #241a12; /* 深底橙洗（悬停底色）★ 原深绿 #1c2822 → 暖橙调 */
+  --panel: #1c1c1e;       /* 抬升面（1.16:1）★ 原 #1c2822 墨绿，黑底上抬不起来 */
+  --glass-bg: #ffffff12;      /* = --dark-glass-bg：深底玻璃 */
+  --glass-bg-hot: #ffffff21;  /* = --dark-glass-bg-hot */
+  --glass-line: #ffffff1f;    /* = --dglass-line：深底玻璃边框 */
+  --glass-shadow:
+    0 1px 2px #00000040,
+    0 8px 28px -12px #00000080;
+  --code-inline-bg: #242424;  /* 行内代码底（1.27:1）★ 原值沿用，换黑底后仍能辨出 */
+  --signal-text: #eba55f;     /* HUD 橙字（**9.44:1**）★ 与新accent 同族，不再是"另一个橙" */
+  --ink-motif: #ffb570;       /* 墨滴母题墨色（**11.33:1**）★ 原浅绿 #8fe0b0，同 --accent-ink */
+  --deco-identity-ink: #f2f4f108; /* 身份舱水印：深底上用浅字 @ 3%（原 --ink @ 6%） */
+}
+
+/* ============================================================================
+ * 立体 ∞（FinInfinity）· 装置色板（2026-10-18）
+ *
+ * 来源：`tmc5csxr9m-cpu/rhine-lock` 的 ∞ fin sculpture（400 片 Gerono 双纽线鳍）。
+ * ★ 原版把这几档**写死在着色器里**（rlPaper / rlGraphite / orange / lime），
+ *   本站改为 token —— 站规 §3 第 2 条：组件里不许写字面色值。
+ *
+ * 四档各自的作用：
+ *   --fin-body-light  亮色档的**鳍片本体色**。原版 rlPaper = (0.935, 0.895,
+ *                     0.830) —— 8bit 化就是 #efe4d3，**很亮**的暖白。
+ *                     ★ 2026-10-18 从 #ddd6c6 提上来：原先那档暗了一大截，
+ *                       加上两盏灯被错写成纯白（丢了原版的暖白/冷蓝色温），
+ *                       整台雕塑在亮色页面上发棕 —— 是本站的颜色，不是原版的。
+ *                     ★★ 同日晚再改一次，从 #efe4d3 收到 #f6f4ee：暖度还剩
+ *                       一半就够。原因是**包围色不同**，不是材质错了 ——
+ *                       原版页面底是暖灰纸 #e7e5e1（R−B = 6，比雕塑更暗），
+ *                       暖白鳍片压在上面读作「白」；本站纸白是 #fafaf7
+ *                       （R−B = 3，比雕塑更亮），同一个暖白放上去就读成奶油黄。
+ *                       同一个绝对色值，换了底就换了观感 —— 判据因此守**相对纸白的
+ *                       暖度差**，不守固定色值。实测鳍片 R−B：改前 13~29，改后 6~15。
+ *   --fin-body-dark   暗色档的**鳍片本体色**。不是纯黑 —— 纯黑与 --paper(#0b0b0c)
+ *                     完全糊在一起，整台装置会消失。取比底略浅的冷灰。
+ *   --fin-ambient-*   环境光色。原版用 studio.hdr 走 PMREM，本站改用 AmbientLight
+ *                     顶替（站规禁外部资源），强度对齐 LOOK.env = 0.8，暗色档
+ *                     按原版联动 `* (1 - uDenied*0.72)` 只剩 28%。
+ *   --fin-glow-dark   暗色档的**自发光**。★ 与 --accent 分开：原版的橙过了
+ *                     grade 管线里的 `sat 0.7`（Khronos PBR Neutral 再降饱和），
+ *                     本站没有那层，同一个 #ff7b00 直出就会偏艳。这档是原版橙
+ *                     经 sat 0.7 降饱和后的等效值。装置的橙与 UI 的橙从此各调各的。
+ * ========================================================================== */
+:root {
+  /* 亮色档：鳍片 = 纸白近中性（只比 --paper 暖 5 阶，保留一点纸的手感）；
+     环境光 = 纸色同源 */
+  --fin-body-light: #f6f4ee;
+  --fin-static-stroke: var(--fin-pulse-light);
+  --fin-ambient-light: #fafaf7;
+  /* 点击脉冲的淡绿表面色，独立于界面墨绿，避免染成深绿条。 */
+  --fin-pulse-light: #b9dfc3;
+  /* 亮色场景也会预读暗色端点，避免主题预览读到空色值。 */
+  --fin-body-dark: #3a3a3e;
+  --fin-ambient-dark: #0d0d0f;
+  --fin-glow-dark: #e08a3f;
+}
+html.dark {
+  /* 暗色档：鳍片 = 冷灰（对 --paper #0b0b0c 有明度差，约 1.9:1 —— 够撑出体积又不抢眼）；
+     环境光压到 ~28% 亮度（对应原版那个 0.72 的系数） */
+  --fin-body-dark: #3a3a3e;
+  --fin-static-stroke: var(--fin-body-dark);
+  --fin-ambient-dark: #0d0d0f;
+  --fin-glow-dark: #e08a3f;
+}
+
+/* 首页的 DNA 灯光：亮色沿用原模型与原灯色，暗色以铜色和石墨色分开双链。 */
+body.chrome-console {
+  --tsl-entry-color: #1f614b;
+  --tsl-entry-opacity: 0.025;
+  --tsl-entry-glow: 0.15;
+  --tsl-entry-frame: #285b46;
+  --tsl-glass-edge: #205b45c4;
+  --tsl-glass-back-line: #34715980;
+  --tsl-glass-fill: #ffffff00;
+  --tsl-glass-highlight: #effff6e0;
+  --tsl-glass-tint: #2b715e01;
+  --tsl-glass-shadow: #163c2d12;
+  --tsl-glass-sheen: 0.12;
+  --tsl-glass-sheen-low: 0.025;
+  --dna-sky: #d8ece0;
+  --dna-ground: #1a2b23;
+  --dna-key: #ffffff;
+  --dna-fill: #a8d4bc;
+  --dna-rim: #ffffff;
+}
+html.dark body.chrome-console {
+  --tsl-entry-color: #0b100e;
+  --tsl-entry-opacity: 0.32;
+  --tsl-entry-glow: 1;
+  --tsl-entry-frame: #ffffff;
+  --tsl-glass-edge: #ff9b4799;
+  --tsl-glass-back-line: #cf7c3d66;
+  --tsl-glass-fill: #a5afad0a;
+  --tsl-glass-highlight: #ffe5cbb3;
+  --tsl-glass-tint: #ff7b000a;
+  --tsl-glass-shadow: #00000066;
+  --tsl-glass-sheen: 0.24;
+  --tsl-glass-sheen-low: 0.09;
+  --paper: #100d0b;
+  --ink: #eee4d9;
+  --muted: #b6a699;
+  --hair: #463326;
+  --on-band: #f5eee7;
+  --on-band-sub: #ddd0c5;
+  --on-band-meta: #b7a89c;
+  --accent-bright: #ffb570;
+  --logo-ink: #edc7a4;
+  --logo-glow: #ff9b47;
+  --ink-1: #e0a36f;
+  --ink-2: #a86c43;
+  --dusk-1: #140e0a;
+  --dusk-2: #21150f;
+  --dusk-3: #342216;
+  --dusk-4: #2a1c14;
+  --dusk-5: #8d684d;
+  --dusk-6: #dfb68e;
+  --dglass-line: #ffad6630;
+  --deco-orbit-strong: #e8924938;
+  --deco-orbit-soft: #e8924917;
+  --deco-orbit-inner: #e892492e;
+  --home-hero-ink: #21150d;
+  --home-hero-sub: #21150d;
+  --home-hero-meta: #21150d;
+  --home-hero-line: #442b1b59;
+  --home-hero-grid: #442b1b14;
+  --home-hero-glass: #442b1b12;
+  --home-hero-glass-soft: #442b1b05;
+  --home-nav-active-bg: #ffd1aa40;
+  --home-flow-line: #000000;
+  --home-flow-field-opacity: 0.48;
+  --home-flow-path-opacity: 0.9;
+  --home-dna-inset: 20vw;
+  --home-halo: #ff7b0010;
+  --home-halo-soft: #ff6a000a;
+  --home-grid: #e8924914;
+  --home-glass: #ffb5700f;
+  --home-glass-soft: #ffb57004;
+  --home-glass-light: #ffd1aa26;
+  --home-active-bg: #f4924314;
+  --home-active-line: #f4924347;
+  --home-dusk-top: #e85c00;
+  --home-dusk-mid: #593218;
+  --home-paper-edge: #100d0bf5;
+  --dna-body-copper: #875432;
+  --dna-body-graphite: #302b27;
+  --dna-sky: #d59c6b;
+  --dna-ground: #1a0d06;
+  --dna-key: #ffd7ae;
+  --dna-fill: #a66636;
+  --dna-rim: #ffac5a;
+}
+
+/* 文章的工程方格与页边刻度：暗底用铜灰，亮色仍使用原墨绿配方。 */
+html.dark body.post-plate {
+  --deco-plate-fine: #bd9c7c17;
+  --deco-plate-coarse: #c89b752e;
+}
+
+/* 留言声纹带：波形、回复刻度和游标随暗色页使用暖橙。 */
+html.dark body.guestbook-plate {
+  --deco-orbit-strong: #e8924938;
+  --deco-orbit-inner: #e892492e;
+  --deco-plate-coarse: #c89b752e;
+}
+
+/* 相册暗色：显影板与交接幕共用浓橙，板面文字和桌面导航为近黑。 */
+html.dark body.gallery-inf-plate {
+  --gallery-bath-ink: #15100b;
+  --gallery-bath-shadow: 0 1px 2px #ffcfa680;
+  --gallery-bath-hint-shadow: var(--gallery-bath-shadow);
+  --gallery-topbar-ink: #21150d;
+  --gallery-topbar-emphasis: #15100b;
+  --gallery-topbar-line: #21150d38;
+  --gallery-topbar-nav-line: #21150d59;
+  --gallery-topbar-hot-line: #21150d99;
+  --gallery-topbar-current-line: #21150d;
+  --gallery-topbar-bg: linear-gradient(180deg, #f56800e6, #f5680024);
+}
+
+/* 标签百褶环：沿用关于页的石墨黑本体与橙色脉冲，薄片明暗撑出黑底上的体积。 */
+html.dark body.tags-plate {
+  --pleat-base: var(--fin-body-dark);
+  --pleat-wave: var(--fin-glow-dark);
+  --pleat-opacity: 0.72;
+  --pleat-wave-opacity: 0.72;
+  --pleat-contrast: 0.8;
+  --pleat-glow: 0.5;
+  --pleat-fallback-filter: grayscale(1) brightness(0.23) drop-shadow(0 0 2px #e08a3f4d);
+  --deco-crosshair-line: #ed8c3b66;
+  --deco-crosshair-dot: #ffb570b3;
+}
+
+/* 造物台与项目预览：亮暗状态在此统一定义。 */
+:root {
+  --forge-preview-paper: #fbfcf7;
+  --forge-preview-ink: #273d2f;
+  --forge-preview-mat: #dce2d5;
+  --forge-preview-line: #dce3d9;
+  --forge-preview-muted: #65735b;
+  --forge-preview-symbol: #c1cbb6;
+  --forge-editor-sidebar: #17251e;
+  --forge-editor-sidebar-ink: #dce7d9;
+  --forge-editor-active: #2d4737;
+  --forge-preview-code: #e9eee6;
+  --forge-preview-code-ink: #41634b;
+  --forge-preview-code-key: #80613b;
+  --forge-paper: #f5f4ef;
+  --forge-paper-clean: #fafaf7;
+  --forge-ink: #252b27;
+  --forge-muted: #687062;
+  --forge-line: #3948392b;
+  --forge-glass: #fafaf7a6;
+  --forge-panel: #eeeee8;
+  --forge-shadow: #1e2a201a;
+  --forge-etch: #33523526;
+  --forge-object-shadow: #28372c24;
+  --forge-button: #fafaf4d6;
+  --forge-button-hot: #fafaf4f2;
+  --forge-button-line: #ffffff4d;
+  --forge-model-shadow: #1a351d26;
+  --forge-editor-shadow: #11181338;
+  --forge-model-line: #243f2426;
+  --forge-dialog-backdrop: #0f140f66;
+  --forge-dialog-shadow: #00000040;
+  --forge-metal: #bfc5be;
+  --forge-metal-edge: #e8ede6;
+  --forge-chain: #8a948b;
+  --forge-break-glint: var(--forge-light-key);
+  --forge-rim: #69a575;
+  --forge-light-key: #ffffff;
+  --forge-light-fill: #f4f6ef;
+  --forge-studio-top: #d5d7d3;
+  --forge-studio-upper: #8c918b;
+  --forge-studio-lower: #474f48;
+  --forge-studio-bottom: #161d18;
+  --forge-studio-panel: #e8eae6;
+}
+html.dark {
+  --forge-preview-paper: #171914;
+  --forge-preview-ink: #e6e9de;
+  --forge-preview-mat: #24251d;
+  --forge-preview-line: #36392e;
+  --forge-preview-muted: #abb39c;
+  --forge-preview-symbol: #484d37;
+  --forge-editor-sidebar: #0d110e;
+  --forge-editor-sidebar-ink: #e2e6dc;
+  --forge-editor-active: #383322;
+  --forge-preview-code: #242920;
+  --forge-preview-code-ink: #b7ca9c;
+  --forge-preview-code-key: #d2a66e;
+  --forge-paper: #100d0b;
+  --forge-paper-clean: #15120f;
+  --forge-ink: #ede9df;
+  --forge-muted: #aaa398;
+  --forge-line: #d8c5aa29;
+  --forge-glass: #1d1814b3;
+  --forge-panel: #1b1713;
+  --forge-shadow: #0000004d;
+  --forge-etch: #ce90512e;
+  --forge-object-shadow: #000000cc;
+  --forge-button: #27251fe8;
+  --forge-button-hot: #343128f2;
+  --forge-button-line: #eee4d929;
+  --forge-model-shadow: #00000066;
+  --forge-editor-shadow: #00000080;
+  --forge-model-line: #d8c5aa29;
+  --forge-dialog-backdrop: #07060599;
+  --forge-dialog-shadow: #00000080;
+  --forge-metal: #636563;
+  --forge-metal-edge: #c8c6be;
+  --forge-chain: #77746c;
+  --forge-break-glint: var(--accent);
+  --forge-rim: #ff7b00;
+}
+
+/* 关于页第四版：分段阅读、透明正文与浮动章节导航。 */
+:root{--about-line:#1a1a1a26;--about-glass:#fafaf7ed;--about-shade:#1a1a1a16;--about-hover:#266b3b0d;--about-space:clamp(25px,5.4vw,90px);--about-serif:'Songti SC','Noto Serif CJK SC','STSong','SimSun',serif}
+html.dark{--about-line:#f2f4f12e;--about-glass:#141416ed;--about-shade:#00000044;--about-hover:#ff7b0010}
+
+/* 相册封面舞台：经体验稿确认的纸白、胶片灰绿与暗色铜金。 */
+ :root{--gallery-paper:#fafaf7;--gallery-ink:#1a1a1a;--gallery-muted:#68716a;--gallery-accent:#286e40;--gallery-stroke:#2b7446;--gallery-hair:#244f302b;--gallery-image-line:#1a1a1a24;--gallery-image-shadow:#13281921;--gallery-dialog-shadow:#17351e2e;--gallery-backdrop:#15261b6b;--gallery-hover:#286e400b;--gallery-serif:'Songti SC','Noto Serif CJK SC',STSong,SimSun,serif}
+html.dark{--gallery-paper:#0b0b0c;--gallery-ink:#f2f4f1;--gallery-muted:#a6aaa4;--gallery-accent:#efa66c;--gallery-stroke:#efa66c;--gallery-hair:#efa66c42;--gallery-image-line:#f2f4f13b;--gallery-image-shadow:#00000099;--gallery-dialog-shadow:#00000099;--gallery-backdrop:#000000ad;--gallery-hover:#efa66c0c}
+ :root{--gallery-film-base:#8c9b8d;--gallery-film-shade:#d0d5c8;--gallery-film-edge:#54725a;--gallery-film-frame:#708777;--gallery-film-opacity:.40;--gallery-bath-faint:#ffffffa6}
+html.dark{--gallery-film-base:#785737;--gallery-film-shade:#221c17;--gallery-film-edge:#c28d58;--gallery-film-frame:#a37344;--gallery-film-opacity:.47;--gallery-bath-faint:#15100bb0}
+:root{--gallery-detail-1:#00000026}

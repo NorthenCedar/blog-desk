@@ -1,0 +1,37 @@
+@font-face {
+  font-family: Archivo;
+  src: url("/fonts/archivo-latin.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("/fonts/plex-sans-400.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("/fonts/plex-sans-600.woff2") format("woff2");
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/fonts/plex-mono-400.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+/* 手写花体 —— 相册页整屏显影板上那行字用（站主 2026-10-01：「用参考站同款字体」）。
+   ★ Homemade Apple（Google Fonts，**OFL 1.1** ⇒ 允许自托管与再分发）；
+     参考站 lowkeytp.art/liquid-reveal/ 用的就是它（它的 CSS 里 @font-face: HomemadeApple，
+     加载的是自己的 .ttf 副本）。
+   ★ 自托管在 public/fonts/（48 KB），**不引 CDN** —— 与站内其余字体同一做法。
+   ★★ 只有拉丁字形（unicode-range 是 Latin）：英文花体用它，中文另走系统手写体兜底。
+   ★ font-display: swap：字体没到时先用兜底体把字显示出来，不是"空一片"。 */
+@font-face {
+  font-family: "Homemade Apple";
+  src: url("/fonts/homemade-apple.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}

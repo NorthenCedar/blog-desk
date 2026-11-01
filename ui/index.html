@@ -35,6 +35,7 @@
     <nav class="nav" id="nav">
       <button data-view="write"   aria-current="page"><span class="ico">✎</span>写作</button>
       <button data-view="forge"><span class="ico">◇</span>造物台</button>
+      <button data-view="albums"><span class="ico">▧</span>相册编辑</button>
       <button data-view="tags"><span class="ico">#</span>标签</button>
       <button data-view="publish"><span class="ico">↑</span>发布</button>
       <button data-view="log"><span class="ico">☰</span>日志</button>
@@ -165,6 +166,7 @@
       </section>
 
       <section class="view" data-view="forge" aria-label="造物台编辑器"></section>
+      <section class="view" data-view="albums" aria-label="相册编辑器"></section>
 
       <!-- ── 标签 ── -->
       <section class="view" data-view="tags">
@@ -425,6 +427,8 @@
 <input type="file" id="file-pick" accept="image/*" multiple hidden>
 
 <script src="/forge.js"></script>
+<script src="/gallery.js"></script>
+<link rel="stylesheet" href="/album-shared/styles/album-cover-preview.css">
 <script src="/app.js"></script>
 </body>
 </html>

@@ -322,6 +322,12 @@ label.field > span {
 
 /* 两栏（列表 + 编辑器） */
 .split { display: grid; grid-template-columns: 268px 1fr; gap: var(--sp-5); align-items: start; height: 100%; }
+.album-split { height:auto; grid-template-columns: minmax(180px,268px) minmax(0,1fr); }
+.album-split > *, #album-editor, #album-preview { min-width:0; max-width:100%; }
+#album-images .row, #album-editor > .row, #album-adjust, #album-presets { flex-wrap:wrap; }
+#album-images .grow, #album-editor .field { min-width:0; }
+#album-editor input, #album-editor select { max-width:100%; }
+@media(max-width:900px){.album-split{grid-template-columns:1fr}.album-split .field{flex:1 1 100%;width:100%}#album-images .row{align-items:flex-start}#album-images .grow{flex-basis:100%}}
 .list {
   border: 1px solid var(--hair); border-radius: 10px; overflow: hidden;
   max-height: calc(100vh - 190px); overflow-y: auto; background: var(--paper);
