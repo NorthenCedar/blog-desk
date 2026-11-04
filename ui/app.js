@@ -584,8 +584,12 @@
     //   所以引用块必须同时认这两种写法 —— 只认 `>` 的话引用永远解析不出来。
     const QUOTE = /^(?:>|&gt;)\s?(.*)$/;
 
+    // ★ 2026-11-04：段内换行按 <br> 渲染，和线上站点一致。
+    //   站主报「本地写作台正常，推到线上换行全没了」——原因是 Markdown 把单个换行当软换行，
+    //   站点已改成按行渲染（blog 仓库 src/styles/prose.css 的 white-space: pre-wrap）；
+    //   预览这里原来用 join(' ') 把行并成一句，两边就对不上了。
     const flushPara = () => {
-      if (para.length) { out.push(`<p>${inline(para.join(' '))}</p>`); para = []; }
+      if (para.length) { out.push(`<p>${inline(para.join('<br>'))}</p>`); para = []; }
     };
     const flushList = () => {
       if (list) {
