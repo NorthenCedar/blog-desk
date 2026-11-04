@@ -88,17 +88,16 @@ MP4 推荐 H.264 + AAC。填写说明后保存，再去发布。原件存入博�
 git clone <this-repo> blog-desk
 cd blog-desk
 
-# 建议装进虚拟环境
-python -m venv .venv
-.venv\Scripts\activate
+# 建议装进虚拟环境，但**不要建在本仓库里**（原因见下）
+python -m venv "$env:LOCALAPPDATA\Programs\写作台-build-venv"
+& "$env:LOCALAPPDATA\Programs\写作台-build-venv\Scripts\Activate.ps1"
 pip install -r requirements.txt      # pywebview / pythonnet / Pillow / PyYAML，版本已钉住
 
 # ★★ venv **不要建在本仓库里**（2026-10-15 实测，见 build-app.py 的 preflight）：
 #   本仓库所在的 D:\ 整棵树挂着 `Mandatory Label\Low Mandatory Level` 低完整性标签，
 #   在这里建的 .venv 会**继承**这个标签 ⇒ 低完整性进程写不进
 #   %LOCALAPPDATA%\Programs\，装到一半 Permission denied。
-#   ⇒ 建在工作区外面，例如：
-#   python -m venv "$env:LOCALAPPDATA\Programs\写作台-build-venv"
+#   所以上面那行把 venv 建在 %LOCALAPPDATA%\Programs\ 下面。
 #
 # ★★ `Pillow` 与 `PyYAML` 别漏（2026-10-15 实测）：`lib/images.py` 顶层
 #   `from PIL import Image`、`lib/content.py` 顶层 `import yaml`，缺了照样能"构建成功"，
