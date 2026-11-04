@@ -591,6 +591,17 @@
     const flushPara = () => {
       if (para.length) { out.push(`<p>${inline(para.join('<br>'))}</p>`); para = []; }
     };
+
+    // ★ 2026-11-04（第二轮）：段落续行的行首缩进也要保住。
+    //   站主写笔记是「一行一条、子项缩进两个空格」，而 markdown 会把续行开头的空格
+    //   当缩进吃掉（站点那边也在喂解析器之前换成了不换行空格）。
+    //   这里必须用同一套规则：只认 1–3 个空格（4 个起是缩进代码块，动了就成正文），
+    //   而且只对段落**非首行**生效（段落首行的缩进属于块级缩进，两边都不保留）。
+    const keepLead = (raw, isFirstLine) => {
+      if (isFirstLine) return raw.trim();
+      const m = /^( {1,3})(?! )/.exec(raw);
+      return m ? '\u00A0'.repeat(m[1].length) + raw.trim() : raw.trim();
+    };
     const flushList = () => {
       if (list) {
         out.push(`<${list.tag}>${list.items.map((x) => `<li>${inline(x)}</li>`).join('')}</${list.tag}>`);
@@ -675,7 +686,7 @@
         continue;
       }
       flushList();
-      para.push(line);
+      para.push(keepLead(raw, para.length === 0));
     }
     flushAll();
     return out.join('\n');

@@ -55,3 +55,17 @@ test('加粗等行内语法跨行仍然生效', () => {
   const html = render('**重点**\n下一行');
   assert.equal(html, '<p><strong>重点</strong><br>下一行</p>');
 });
+test('段落续行的行首缩进用不换行空格保住（与站点同一规则）', () => {
+  const html = render("1.int x = 0144;\n  int x = 0x64;\n  third;");
+  assert.equal(html, '<p>1.int x = 0144;<br>\u00A0\u00A0int x = 0x64;<br>\u00A0\u00A0third;</p>');
+});
+
+test('分隔符后面是空格时不算缩进（4 空格起不碰）', () => {
+  const html = render('第一行\n    四个空格的行');
+  assert.equal(html, '<p>第一行<br>四个空格的行</p>');
+});
+
+test('段落首行的缩进不保留（与站点一致）', () => {
+  const html = render('  首行有缩进\n第二行');
+  assert.equal(html, '<p>首行有缩进<br>第二行</p>');
+});
