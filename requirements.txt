@@ -1,0 +1,13 @@
+# 写作台运行依赖
+# 版本取自 2026-11-04 在 Windows + Python 3.14.7 上实测通过的一轮：
+# 构建、窗口启动、/api/health 自检、PyInstaller 打包全部正常。
+pywebview==6.2.1
+pythonnet==3.2.1
+Pillow==13.0.0
+PyYAML==6.0.3
+
+# 打包成 exe 时才需要（build-app.py 会在跑 PyInstaller 之前逐个 import 预检）：
+#   pip install pyinstaller==6.22.3
+#
+# 说明：Pillow 与 PyYAML 缺了不会让构建报错，只会产出一个双击就崩的 exe
+#   —— lib/images.py 顶层 from PIL import Image、lib/content.py 顶层 import yaml。

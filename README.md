@@ -81,6 +81,8 @@ MP4 推荐 H.264 + AAC。填写说明后保存，再去发布。原件存入博�
 
 需要 **Windows** 与 **Python 3.10+**（含 `pywebview` 与 `pythonnet`，
 两者都是纯 pip 包，不需要 Node、不需要系统级安装器）。
+依赖清单见 `requirements.txt`；2026-11-04 在 Python **3.14.7** 上用那组版本
+跑通了构建、窗口启动与 PyInstaller 打包。
 
 ```bash
 git clone <this-repo> blog-desk
@@ -89,8 +91,7 @@ cd blog-desk
 # 建议装进虚拟环境
 python -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.txt      # 如果仓库里没有，用下面这行
-pip install pywebview pythonnet Pillow PyYAML
+pip install -r requirements.txt      # pywebview / pythonnet / Pillow / PyYAML，版本已钉住
 
 # ★★ venv **不要建在本仓库里**（2026-10-15 实测，见 build-app.py 的 preflight）：
 #   本仓库所在的 D:\ 整棵树挂着 `Mandatory Label\Low Mandatory Level` 低完整性标签，
@@ -148,7 +149,7 @@ python app.py --repo "D:\path\to\your\blog-repo"
 ## 打包成 exe（可选）
 
 ```bash
-pip install pyinstaller
+pip install pyinstaller==6.22.3     # 实测过的版本（6.22.x 起支持 Python 3.14）
 python build-app.py
 ```
 
