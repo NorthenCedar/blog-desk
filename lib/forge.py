@@ -24,6 +24,22 @@ RESERVED = {'con', 'prn', 'aux', 'nul', *(f'com{i}' for i in range(1, 10)),
             *(f'lpt{i}' for i in range(1, 10))}
 
 
+class IndentedDumper(yaml.SafeDumper):
+    """列表按 2 空格缩进，不顶格。
+
+    ★ 为什么必须覆盖：PyYAML 默认把序列写成 `key:` 换行后**顶格**的 `- item`
+      （`increase_indent(..., indentless=True)` 那条路）。站点那边的写入器
+      （`blog/src/lib/writer/content.ts` 的 `updateMap`）替换字段值时，
+      **沿用的是原文件里该值的起始列**：原值从第 0 列开始，它就把新值也写到第 0 列，
+      于是 `notes:` 下面多出一个文档级的 `[{...}]` 根节点，YAML 当场非法，
+      发布前的 `npm run verify` 报「原文格式暂不支持安全编辑」。
+      ⇒ 这个坑的源头在落盘形态，所以在这里按仓库既有风格统一缩进。
+    """
+
+    def increase_indent(self, flow=False, indentless=False):
+        return super().increase_indent(flow, False)
+
+
 def parse_fields(text):
     try:
         return parse_frontmatter(text)
@@ -201,8 +217,8 @@ def patch_fields(text, fields, allowed, body=None):
     for key in allowed:
         if key not in fields or fields[key] == old.get(key) and key in old:
             continue
-        rendered = yaml.safe_dump({key: fields[key]}, allow_unicode=True, sort_keys=False,
-                                  width=1000).rstrip('\n')
+        rendered = yaml.dump({key: fields[key]}, Dumper=IndentedDumper, allow_unicode=True,
+                             sort_keys=False, width=1000).rstrip('\n')
         if key in spans:
             start, end, kind = spans[key]
             if end < start:
