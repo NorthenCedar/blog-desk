@@ -538,6 +538,13 @@
       clips.push(videoMarkup(u, decode.value, true));
       return `\n\u0000V${clips.length - 1}\u0000\n`;
     });
+    // 语音（2026-11-10）：整行 `!audio[说明](/audio/<64hex>.mp3|wav)` —— 与站点同一条语法
+    //（blog/src/lib/markdown-audio.mjs 在构建时把它换成播放条，这里预览也要能听）。
+    // 必须整行匹配：句中出现的不算（否则正文里提到语法就会被吃掉）。
+    s = s.replace(/^!audio\[([^\]\n]*)\]\((\/audio\/[0-9a-f]{64}\.(?:mp3|wav))\)[ \t]*$/gm, (_m, label, u) => {
+      clips.push(audioMarkup(u, label, true));
+      return `\n\u0000V${clips.length - 1}\u0000\n`;
+    });
     s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (_m, alt, u) => {
       links.push({ img: true, alt, u });
       return `\u0000L${links.length - 1}\u0000`;
@@ -1289,6 +1296,16 @@
   }
 
   const videoPreviewURL = (src) => '/api/video?name=' + encodeURIComponent(src.slice('/videos/'.length));
+  const audioPreviewURL = (src) => '/api/audio?name=' + encodeURIComponent(src.slice('/audio/'.length));
+  function audioMarkup(src, label, preview = false) {
+    const url = preview ? audioPreviewURL(src) : src;
+    const name = esc(label || '语音');
+    return `<div class="desk-audio"><audio controls preload="none" src="${esc(url)}" aria-label="${name}"></audio>`
+      + (label ? `<span class="hint">${name}</span>` : '')
+      + '</div>';
+  }
+  /** 正文里真正写到文件的那一行（站点构建时认这个语法） */
+  const audioLine = (src, label) => `!audio[${String(label || '').replace(/[\[\]\n]/g, ' ')}](${src})`;
   function videoMarkup(src, caption, preview = false) {
     const url = preview ? videoPreviewURL(src) : src;
     return `<video controls preload="none" playsinline src="${esc(url)}" aria-label="${esc(caption)}" style="display:block;max-width:100%;height:auto"><a href="${esc(url)}">下载视频：${esc(caption)}</a></video>`;
@@ -1324,6 +1341,46 @@
         renderTalkVideos(item.videos);
       }
       toast('视频已入库，记得保存当前内容后再发布');
+    }
+  }
+
+  /**
+   * 上传语音（mp3 / wav）。站主 2026-11-10：「说说、留言、文章」都要能放音频。
+   * 与视频的三点差别：
+   *   ① 文章正文不写 <audio> 标签，只写一行 `!audio[说明](/audio/…)`（站点构建时换成播放条，
+   *      这样阅读模式/长页面上不会被一段裸控件打断排版）；
+   *   ② 说说里存成 frontmatter 的 `audio: [{src,label}]`；
+   *   ③ 说明可以留空 —— 语音本身常常就是内容（视频则必须写，因为静音帧看不出是什么）。
+   */
+  async function uploadOwnerAudio(where) {
+    if (where === 'post' && !S.post) return toast('先打开一篇文章', true);
+    if (where === 'talks' && S.talkIdx < 0) return toast('先选一条说说', true);
+    const target = where === 'post' ? S.post : S.talks.items[S.talkIdx];
+    const files = await pickFiles('.mp3,.wav,audio/mpeg,audio/wav');
+    for (const file of files) {
+      if (!/\.(mp3|wav)$/i.test(file.name) || !file.size || file.size > 24 * 1024 * 1024) {
+        toast(`${file.name}：只接受单个不超过 24 MiB 的 MP3 / WAV`, true);
+        continue;
+      }
+      const answer = await askForm('语音说明', '可留空。填了会显示在播放条上，读屏也会念出来。', [
+        { k: 'label', label: '说明（可空）', value: '' },
+      ], { okText: '上传并插入' });
+      if (!answer) continue;
+      const label = String(answer.label || '').trim().slice(0, 120);
+      const uploaded = await POST('/api/audio/upload', {
+        data: await fileToDataURL(file), name: file.name, where, slug: where === 'post' ? target.slug : '',
+      });
+      if (target !== (where === 'post' ? S.post : S.talks.items[S.talkIdx])) {
+        toast('语音已入库，但编辑对象已变化；未插入其他内容，请重新选择原条目', true);
+        return;
+      }
+      if (where === 'post') insertAtCursor($('#f-body'), `\n\n${audioLine(uploaded.src, label)}\n\n`);
+      else {
+        const item = S.talks.items[S.talkIdx];
+        (item.audio ||= []).push({ src: uploaded.src, label });
+        renderTalkAudios(item.audio);
+      }
+      toast('语音已入库，记得保存当前内容后再发布');
     }
   }
 
@@ -1425,6 +1482,7 @@
     language.addEventListener('mousedown', event => { if (!ready()) event.preventDefault(); });
     language.addEventListener('change', () => applyFormat('language'));
     $('#btn-insert-video').addEventListener('click', guard($('#btn-insert-video'), () => uploadOwnerVideo('post')));
+  $('#btn-insert-audio').addEventListener('click', guard($('#btn-insert-audio'), () => uploadOwnerAudio('post')));
     $('#btn-new-post').addEventListener('click', () => newPost());
     $('#btn-refresh-posts').addEventListener('click', async () => {
       await loadPosts();
@@ -1655,6 +1713,23 @@
     $('#t-text').value = it.text || '';
     renderTalkImages(it.images || []);
     renderTalkVideos(it.videos || []);
+    renderTalkAudios(it.audio || []);
+  }
+
+  function renderTalkAudios(voices) {
+    const box = $('#t-audios');
+    if (!box) return;
+    box.innerHTML = voices.length ? '' : '<span class="hint">（这条还没配语音）</span>';
+    voices.forEach((voice, index) => {
+      const row = document.createElement('div');
+      row.className = 'stack';
+      row.innerHTML = audioMarkup(voice.src, voice.label || '', true) +
+        `<label class="field"><span>语音说明（可空）</span><input class="audio-label" data-i="${index}" value="${esc(voice.label || '')}"></label>` +
+        '<button class="btn ghost sm" style="align-self:flex-start">从这条说说移除（原件保留）</button>';
+      row.querySelector('input').addEventListener('input', (e) => { voice.label = e.target.value; });
+      row.querySelector('button').addEventListener('click', () => { voices.splice(index, 1); renderTalkAudios(voices); });
+      box.appendChild(row);
+    });
   }
 
   function renderTalkVideos(clips) {
@@ -1751,7 +1826,7 @@
 
   function newTalk() {
     const items = [...S.talks.items];
-    items.push({ id:'talk-' + crypto.randomUUID(), date: today(), text: '', href: '', images: [], videos: [] });
+    items.push({ id:'talk-' + crypto.randomUUID(), date: today(), text: '', href: '', images: [], videos: [], audio: [] });
     S.talkIdx = items.length - 1;
     S.talks.items = items;
     renderTalkList();
@@ -1826,6 +1901,7 @@
 
   function initTalks() {
     $('#btn-talk-video').addEventListener('click', guard($('#btn-talk-video'), () => uploadOwnerVideo('talks')));
+  $('#btn-talk-audio').addEventListener('click', guard($('#btn-talk-audio'), () => uploadOwnerAudio('talks')));
     $('#btn-new-talk').addEventListener('click', () => newTalk());
     $('#btn-refresh-talks').addEventListener('click', () => loadTalks().then(() => toast('重新读过了')).catch((e) => toast(e.message, true)));
     $('#btn-save-talk').addEventListener('click', () => saveTalk().catch((e) => toast(e.message, true)));

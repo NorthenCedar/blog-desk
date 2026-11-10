@@ -604,3 +604,18 @@ body.bare .titlebar:hover .light svg { opacity: 0; }
 .forge-model pre { white-space: pre-wrap; }
 @media (max-width: 800px) { .forge-split, .forge-page-fields { grid-template-columns: 1fr; } .forge-image-row { flex-direction: column; } }
 @media (prefers-reduced-motion: reduce) { .forge-photo-preview picture, .forge-effect-scan::after { transition: none; transform: none !important; } }
+
+/* 语音（2026-11-10）：预览里的播放条。
+   与站点 audio.css 的取舍一致 —— 直角、发丝线、宽度可控，不抢正文。 */
+.desk-audio {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  border: 1px solid var(--hair, rgba(0,0,0,.14));
+  border-radius: 0;
+  padding: var(--sp-2) var(--sp-3);
+  margin: var(--sp-3) 0;
+  max-width: 34rem;
+}
+.desk-audio audio { flex: 1 1 auto; min-width: 0; height: 2rem; }
+.desk-audio .hint { flex: 0 0 auto; font-family: var(--fs-mono, monospace); font-size: var(--fs-xs, .75rem); }

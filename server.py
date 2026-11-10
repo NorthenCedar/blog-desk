@@ -51,11 +51,12 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from lib import config as cfgmod
-from lib import gitops, images, proc, videos
+from lib import audios, gitops, images, proc, videos
 from lib.content import Content, ContentError, ContentConflict
 from lib.forge import Forge
 from lib.gallery import Gallery
 from lib.videos import VideoError
+from lib.audios import AudioError
 from lib.images import ImageError
 from lib.gitops import GitError
 
@@ -269,6 +270,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def _video(self, q, head=False):
         data, mime = videos.read_video(self.app.repo, q.get('name', [''])[0])
+        return self._media(data, mime, head)
+
+    def _audio(self, q, head=False):
+        data, mime = audios.read_audio(self.app.repo, q.get('name', [''])[0])
+        return self._media(data, mime, head)
+
+    def _media(self, data, mime, head=False):
         size = len(data)
         start, end, code = 0, size - 1, 200
         requested = self.headers.get('Range')
@@ -305,12 +313,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_HEAD(self):  # noqa: N802
         target = urlparse(self.path)
-        if target.path != '/api/video':
+        if target.path not in ('/api/video', '/api/audio'):
             self.send_error(404)
             return
         try:
-            self._video(parse_qs(target.query), head=True)
-        except VideoError:
+            if target.path == '/api/audio':
+                self._audio(parse_qs(target.query), head=True)
+            else:
+                self._video(parse_qs(target.query), head=True)
+        except (VideoError, AudioError):
             self.send_error(404)
 
     def do_GET(self):  # noqa: N802
@@ -319,6 +330,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if u.path == '/api/video':
                 return self._video(q)
+            if u.path == '/api/audio':
+                return self._audio(q)
             if u.path == "/api/health":
                 return self._json({"ok": True, "repo": str(self.app.repo)})
             if u.path == "/api/state":
@@ -376,7 +389,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(cfgmod.public_config(self.app.config))
             # 静态
             return self._static("index.html" if u.path == "/" else u.path)
-        except (ContentError, ImageError, VideoError) as e:
+        except (ContentError, ImageError, VideoError, AudioError) as e:
             return self._json({"error": str(e)}, 400)
         except GitError as e:
             return self._json({"error": str(e)}, 502)
@@ -474,6 +487,13 @@ class Handler(BaseHTTPRequestHandler):
                     raise VideoError('视频数据无效，请重新选择文件') from e
                 return self._json(videos.save_video(c, body.get('name', ''), data, body.get('where', ''), body.get('slug', '')))
 
+            if u.path == '/api/audio/upload':
+                try:
+                    data = base64.b64decode((body.get('data') or '').split(',')[-1], validate=True)
+                except (ValueError, TypeError) as e:
+                    raise AudioError('音频数据无效，请重新选择文件') from e
+                return self._json(audios.save_audio(c, body.get('name', ''), data, body.get('where', ''), body.get('slug', '')))
+
             if u.path == "/api/upload":
                 data = base64.b64decode((body.get("data") or "").split(",")[-1])
                 where = body.get("where")
@@ -520,7 +540,7 @@ class Handler(BaseHTTPRequestHandler):
 
         except ContentConflict as e:
             return self._json({'error': str(e), 'conflict': True}, 409)
-        except (ContentError, ImageError, VideoError) as e:
+        except (ContentError, ImageError, VideoError, AudioError) as e:
             return self._json({"error": str(e)}, 400)
         except GitError as e:
             return self._json({"error": str(e)}, 502)

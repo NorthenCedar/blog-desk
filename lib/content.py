@@ -467,6 +467,16 @@ class Content:
                     validate_reference(self.repo, clip.get('src', ''), clip.get('alt', ''))
                     lines.append(f"      - src: {yaml_scalar(clip['src'])}")
                     lines.append(f"        alt: {yaml_scalar(clip['alt'])}")
+            # 语音（2026-11-10）：与视频同一形状，label 允许留空（播放条上就不显示文字）。
+            voices = it.get('audio') or []
+            if voices:
+                from lib.audios import validate_audio_reference
+                lines.append('    audio:')
+                for voice in voices:
+                    validate_audio_reference(self.repo, voice.get('src', ''), voice.get('label', ''))
+                    lines.append(f"      - src: {yaml_scalar(voice['src'])}")
+                    if voice.get('label'):
+                        lines.append(f"        label: {yaml_scalar(voice['label'])}")
         new_text = f"---\n{head}\n" + "\n".join(lines) + "\n---\n" + body
         revision = self._write(md, new_text, nl, base_revision)
         return {"ok": True, "count": len(items), "revision": revision}
