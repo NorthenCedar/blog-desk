@@ -1126,6 +1126,8 @@
     $('#preview').style.display = 'none';
 
     renderTagChips(fm.tags || []);
+    // 以表单的实际值为基准，避免只打开文章就触发写盘。
+    S.post.savedForm = JSON.stringify(collectPost());
     updateSummaryCount();
     renderPostImages();
     renderPostMeta();
@@ -1197,34 +1199,58 @@
     return bad;
   }
 
-  async function savePost(thenPublish) {
+  async function savePost(thenPublish, automatic = false) {
     if (!S.post) return;
     const target = S.post;
+    // 同一篇文章的保存串行进行。手动保存等到版本更新后，再取最新的表单。
+    while (target.pendingSave) {
+      if (automatic) return;
+      await target.pendingSave.catch(() => {});
+      if (S.post !== target || S.view !== 'write') return;
+    }
     const { frontmatter, body } = collectPost();
+    if (automatic && JSON.stringify({ frontmatter, body }) === target.savedForm) return;
     const bad = validatePost(frontmatter);
     if (bad.length) {
-      toast('还差一点：' + bad.join('；'), true);
+      toast((automatic ? '自动保存未完成：' : '还差一点：') + bad.join('；'), true);
       return;
     }
-    const saved = await POST('/api/post', { slug: target.slug, frontmatter, body, base_revision: target.revision });
+    target.pendingSave = POST('/api/post', { slug: target.slug, frontmatter, body, base_revision: target.revision });
+    let saved;
+    try {
+      saved = await target.pendingSave;
+    } finally {
+      delete target.pendingSave;
+    }
     target.revision = saved.revision;
     // 服务端会把 updated 往前推（规则见 docs/content-model.md §6.1），
     // 必须把结果同步回表单：否则输入框还停在旧日期，下次保存会让人以为日期又被改回去了。
     if (saved.updated !== undefined) {
       const advanced = String(saved.updated || '');
+      const submitted = frontmatter.updated || '';
       if (advanced) frontmatter.updated = advanced; else delete frontmatter.updated;
-      const field = $('#f-updated');
-      if (field) field.value = advanced;
+      if (S.post === target) {
+        const field = $('#f-updated');
+        if (field && field.value.trim() === submitted) field.value = advanced;
+      }
     }
     target.frontmatter = frontmatter;
     target.body = body;
-    toast('已保存 content/posts/' + target.slug + '/index.md');
+    target.savedForm = JSON.stringify({ frontmatter, body });
+    toast((automatic ? '已自动保存 ' : '已保存 ') + 'content/posts/' + target.slug + '/index.md');
     await loadPosts();
     // 等待保存期间可以打开另一篇，迟到的响应不能改它的缓存或带走页面。
     if (S.post !== target) return;
     renderPostImages();
     renderPostMeta();
-    if (thenPublish) go('publish');
+    if (thenPublish && S.view === 'write') go('publish');
+  }
+
+  function initPostAutosave() {
+    setInterval(() => {
+      if (S.view !== 'write') return;
+      return savePost(false, true).catch(e => toast('自动保存未完成：' + e.message, true));
+    }, 120_000);
   }
 
   async function newPost() {
@@ -2577,6 +2603,7 @@
     //   表现成"点了没反应"的假红（本轮真踩到：标签页测试 ③ 一直 0 行）。
     //   静态元素存在 ≠ 应用就绪，所以给一个只有 boot() 走完才会置位的标志。
     window.__deskReady = true;
+    initPostAutosave();
   }
 
   if (document.readyState === 'loading') {

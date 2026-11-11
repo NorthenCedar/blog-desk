@@ -34,7 +34,7 @@ function harness({ config, sync = Promise.resolve({ updated: true, message: '已
     go: () => {},
     loadPosts: async () => reads.push('posts'),
   };
-  for (const name of ['Shell','Keys','Write','Tags','Log','Talks','Photos','Comments','Publish','Shortcuts','Settings']) {
+  for (const name of ['Shell','Keys','Write','Tags','Log','Talks','Photos','Comments','Publish','Shortcuts','Settings','PostAutosave']) {
     context['init' + name] = () => {};
   }
   vm.createContext(context);

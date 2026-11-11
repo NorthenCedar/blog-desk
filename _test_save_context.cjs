@@ -24,9 +24,9 @@ function post(slug, revision) {
   return { slug, revision: revision.repeat(64), frontmatter: { title: slug }, body: slug };
 }
 
-function harness({ waitForList = false } = {}) {
+function harness({ waitForList = false, errors = [], collect = null } = {}) {
   const original = post('article-a', 'a');
-  const S = { post: original };
+  const S = { post: original, view: 'write' };
   const request = deferred();
   const list = deferred();
   const edited = { frontmatter: { title: '文章 A 的修改' }, body: '文章 A 的修改正文' };
@@ -43,8 +43,9 @@ function harness({ waitForList = false } = {}) {
       assert.equal(selector, '#f-body', '测试只提供当前文章正文表单');
       return bodyField;
     },
-    collectPost: () => edited,
-    validatePost: () => [],
+    collectPost: collect ? () => collect(form) : () => edited,
+    validatePost: () => errors,
+    setInterval: (tick, delay) => { calls.tick = tick; calls.delay = delay; },
     POST: (url, body) => { calls.requests.push({ url, body }); return request.promise; },
     toast: (message) => calls.toasts.push(message),
     loadPosts: async () => { calls.lists++; if (waitForList) await list.promise; },
@@ -53,8 +54,65 @@ function harness({ waitForList = false } = {}) {
     go: (page) => calls.navigation.push(page),
   });
   vm.runInContext(savePostSource + '\nthis.savePost = savePost;', context);
-  return { S, original, edited, calls, form, request, list, save: context.savePost };
+  return { S, original, edited, calls, form, request, list, save: context.savePost,
+    startAutosave: () => vm.runInContext('initPostAutosave()', context) };
 }
+
+test('两分钟定时保存文章改动，未改动或在其他页面时跳过，成功后不跳去发布', async () => {
+  const collect = form => ({ frontmatter: { title: '标题' }, body: form.body });
+  const h = harness({ collect });
+  h.original.savedForm = JSON.stringify(collect(h.form));
+  h.startAutosave();
+  assert.equal(h.calls.delay, 120_000);
+  await h.calls.tick();
+  assert.equal(h.calls.requests.length, 0);
+  h.form.body = '新写的正文';
+  h.S.view = 'talks';
+  await h.calls.tick();
+  assert.equal(h.calls.requests.length, 0);
+  h.S.view = 'write';
+  const saving = h.calls.tick();
+  assert.equal(h.calls.requests.length, 1);
+  assert.equal(h.calls.requests[0].body.body, '新写的正文');
+  h.request.resolve({ revision: 'c'.repeat(64) });
+  await saving;
+  await h.calls.tick();
+  assert.equal(h.calls.requests.length, 1);
+  assert.ok(h.calls.toasts.some(message => message.includes('已自动保存')));
+  assert.deepEqual(h.calls.navigation, []);
+});
+
+test('自动保存进行中，手动保存等待新版本并保存等待期间继续输入的内容', async () => {
+  const h = harness({ collect: form => ({ frontmatter: { title: '标题' }, body: form.body }) });
+  h.startAutosave();
+  const automatic = h.calls.tick();
+  h.form.body = '自动保存之后继续写的正文';
+  const manual = h.save(false);
+  assert.equal(h.calls.requests.length, 1);
+  h.request.resolve({ revision: 'c'.repeat(64) });
+  await Promise.all([automatic, manual]);
+  assert.equal(h.calls.requests.length, 2);
+  assert.equal(h.calls.requests[1].body.base_revision, 'c'.repeat(64));
+  assert.equal(h.calls.requests[1].body.body, h.form.body);
+});
+
+test('自动保存遇到不完整表单或版本冲突时提示原因，保留正文且不发布', async () => {
+  const errors = ['tags 至少选 1 个'];
+  const h = harness({ errors });
+  h.startAutosave();
+  await h.calls.tick();
+  assert.equal(h.calls.requests.length, 0);
+  assert.match(h.calls.toasts.at(-1), /自动保存未完成.*tags/);
+
+  errors.length = 0;
+  const saving = h.calls.tick();
+  h.request.reject(new Error('文件已被其他程序修改'));
+  await saving;
+  assert.equal(h.original.revision, 'a'.repeat(64));
+  assert.equal(h.form.body, h.edited.body);
+  assert.match(h.calls.toasts.at(-1), /自动保存未完成.*文件已被其他程序修改/);
+  assert.deepEqual(h.calls.navigation, []);
+});
 
 test('保存 A 等待响应时切换 B，不把 A 的版本或缓存写到 B，也不跳去发布页', async () => {
   const h = harness();
