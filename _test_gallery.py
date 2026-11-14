@@ -23,23 +23,39 @@ if importlib.util.find_spec('lib.gallery'):
     from lib.gallery import Gallery
 
 class GalleryTests(unittest.TestCase):
-    def test_shared_preview_bytes_and_recommendation_parity(self):
+    def test_shared_preview_and_recommendation_parity(self):
         spec=importlib.util.spec_from_file_location('sync_album_preview',Path(__file__).parent/'sync-album-preview.py')
         sync=importlib.util.module_from_spec(spec);spec.loader.exec_module(sync)
-        source=Path('D:/router/work/blog-cloud-writer')
+        source=Path(__file__).resolve().parents[1] / 'blog'
         ui=Path(__file__).parent/'ui'
-        for relative in sync.PREVIEW_FILES:
-            self.assertEqual((source/'src'/relative).read_bytes(),(ui/'album-shared'/relative).read_bytes(),relative)
-        for name in sync.FONT_FILES:self.assertEqual((source/'public/fonts'/name).read_bytes(),(ui/'fonts'/name).read_bytes(),name)
+        if (source / '.git').exists():
+            # 封面预览来自 521b9a9，布局列表随当前主站同步。
+            for relative in sync.PREVIEW_FILES:
+                if relative == 'lib/album-presentation.mjs':
+                    expected = (source/'src'/relative).read_text(encoding='utf-8')
+                else:
+                    expected = gitops.git_bin(source, 'show', f'521b9a9:src/{relative}').decode('utf-8').replace('\r\n', '\n')
+                self.assertEqual(expected, (ui/'album-shared'/relative).read_text(encoding='utf-8'), relative)
+            for name in sync.FONT_FILES:
+                self.assertEqual(gitops.git_bin(source, 'show', f'521b9a9:public/fonts/{name}'),
+                                 (ui/'fonts'/name).read_bytes(), name)
         fields=self.fields()
         self.gallery.save_album('中文相册',fields,create=True)
         module=(ui/'album-shared/lib/album-presentation.mjs').resolve().as_uri()
         code=f"import {{recommendPresentation,ALBUM_OPTIONS}} from '{module}'; console.log(JSON.stringify({{recommend:recommendPresentation({{width:20,height:10,title:'旧日'}}),options:ALBUM_OPTIONS}}));"
         result=subprocess.run(['node','--input-type=module','-e',code],capture_output=True,text=True,encoding='utf-8',check=True)
-        from lib.gallery import OPTIONS
+        from lib.gallery import ALBUM_LAYOUTS, OPTIONS
         parsed=json.loads(result.stdout)
         self.assertEqual(self.gallery.recommend('中文相册',fields),parsed['recommend'])
         for key,values in OPTIONS.items():self.assertEqual(values,[x[0] for x in parsed['options'][key] if x[0]!='auto'])
+        self.assertEqual(list(ALBUM_LAYOUTS), [x[0] for x in parsed['options']['layout']])
+
+    def test_layout_roundtrip_keeps_old_and_new_options(self):
+        saved = self.gallery.save_album('中文相册', self.fields(), create=True)
+        for layout in ('dome', 'infinite', 'scatter', 'slices', 'wall', 'willow'):
+            with self.subTest(layout=layout):
+                saved = self.gallery.save_album('中文相册', {'layout': layout}, base_revision=saved['revision'])
+                self.assertEqual(self.gallery.read_album('中文相册')['frontmatter']['layout'], layout)
     def setUp(self):
         self.assertIsNotNone(Gallery, '尚无独立相册服务')
         root = Path('D:/router/work/gallery-writer-20261101/desktop-tests')

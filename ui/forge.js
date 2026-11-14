@@ -98,7 +98,7 @@
   }
 
   function create({ GET, POST, esc, toast, askForm, askConfirm, pickFiles, fileToDataURL,
-                    renderMd, bodyCodeBlocks, insertAtCursor, refreshState, go, config }) {
+                    renderMd, bodyCodeBlocks, insertAtCursor, initBodyResize, refreshState, go, config }) {
     const session = createSession(POST);
     const $ = selector => document.querySelector(selector);
     const pageLabels = {
@@ -242,7 +242,15 @@
         <div class="stack"><h3>项目图库</h3><span class="hint">最多六张，第一张是封面。叠片展示前三张；暗色替图可留空。</span>
           <div id="forge-images" class="stack"></div><button class="btn sm" id="forge-add-image">＋ 上传项目图片</button></div>
         <div class="stack"><h3>项目链接</h3><div id="forge-links" class="stack"></div><button class="btn sm" id="forge-add-link">＋ 添加链接</button></div>
-        ${area('body', '作品正文（Markdown）', project.body || '', 12)}
+        <div class="field">
+          <label for="forge-body">作品正文（Markdown）</label>
+          <div class="write-textbox">
+            <textarea id="forge-body" class="md-editor" data-forge-field="body">${esc(project.body || '')}</textarea>
+            <div class="write-resize" tabindex="0" role="separator" aria-orientation="horizontal"
+                 aria-label="调整作品正文编辑区高度" aria-controls="forge-body"
+                 title="拖动调整高度，也可按上下方向键"></div>
+          </div>
+        </div>
         <div class="row tight"><button class="btn sm" id="forge-body-image">插入正文配图</button><button class="btn sm" id="forge-preview-button">预览作品</button></div>
         <div id="forge-preview" class="preview forge-preview" hidden></div>
         <div class="row"><button class="btn primary" id="forge-save">保存项目 <span class="kbd">Ctrl+S</span></button>
@@ -250,6 +258,7 @@
         <p class="hint">保存后仍需在「发布」中检查并明确发布，才会上线。</p>`;
       $('[data-forge-field="visual"]').value = fm.visual || 'image';
       $('[data-forge-field="effect"]').value = fm.effect || 'auto';
+      initBodyResize($('#forge-body'), $('#forge-editor .write-resize'));
       renderGallery(); renderLinks(); bindFields();
       $('#forge-add-image').addEventListener('click', run(() => uploadImage('gallery')));
       $('#forge-body-image').addEventListener('click', run(() => uploadImage('body')));

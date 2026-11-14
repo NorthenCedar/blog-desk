@@ -451,6 +451,27 @@ def main():
     )
     api._win = win
 
+    native_hook = None
+    acrylic = False
+
+    def configure_window(window):
+        nonlocal native_hook, acrylic
+        if not sys.platform.startswith("win") or window.native is None:
+            return
+        from lib.window_chrome import enable_acrylic, respect_work_area
+        try:
+            native_hook = respect_work_area(window.native.Handle.ToInt64())
+        except OSError as error:
+            app.log(f"设置最大化范围失败：{error}")
+        acrylic = enable_acrylic(window.native)
+
+    def show_acrylic(window):
+        if acrylic:
+            window.evaluate_js("document.documentElement.classList.add('native-acrylic')")
+
+    win.events.before_show += configure_window
+    win.events.loaded += show_acrylic
+
     fb = Fallback(url, app)
     fb.start_watchdog()          # ★ 先挂看门狗：webview.start() 可能是"静默挂死"，不是抛错
     try:

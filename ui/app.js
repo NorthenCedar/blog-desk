@@ -873,7 +873,7 @@
   };
 
   const forgeEditor = window.DeskForge?.create({ GET, POST, esc, toast, askForm, askConfirm,
-    pickFiles, fileToDataURL, renderMd, bodyCodeBlocks, insertAtCursor, refreshState, go, config: () => S.cfg });
+    pickFiles, fileToDataURL, renderMd, bodyCodeBlocks, insertAtCursor, initBodyResize, refreshState, go, config: () => S.cfg });
 
   const galleryEditor = window.DeskGallery?.create({ GET, POST, esc, toast, askForm, askConfirm,
     pickFiles, fileToDataURL });
@@ -1124,6 +1124,7 @@
     $('#f-coveralt').value = fm.coverAlt || '';
     $('#f-body').value = S.post.body;
     $('#preview').style.display = 'none';
+    $('#btn-toggle-preview').setAttribute('aria-pressed', 'false');
 
     renderTagChips(fm.tags || []);
     // 以表单的实际值为基准，避免只打开文章就触发写盘。
@@ -1147,10 +1148,19 @@
     const p = S.posts.find((x) => x.slug === S.post?.slug);
     const dir = S.post?.dir;
     const imgs = (p && p.images) || [];
-    if (!dir || !imgs.length) {
-      box.innerHTML = '<span class="hint">（这个目录里还没有图 —— 点「＋ 插入图片」会存进这里）</span>';
-      return;
-    }
+    const picker = $('#post-cover-pick');
+    picker.replaceChildren(new Option('选择图片', ''));
+    for (const name of imgs) picker.add(new Option(name, './' + name));
+    picker.value = imgs.some(name => './' + name === $('#f-cover').value) ? $('#f-cover').value : '';
+    picker.disabled = !imgs.length;
+    picker.onchange = () => {
+      if (!picker.value) return;
+      const previous = $('#f-cover').value;
+      $('#f-cover').value = picker.value;
+      if (previous !== picker.value) $('#f-coveralt').value = '';
+      $('#f-coveralt').focus();
+    };
+    if (!dir || !imgs.length) return;
     for (const name of imgs) {
       const b = document.createElement('button');
       b.type = 'button';
@@ -1277,7 +1287,7 @@
       await POST('/api/post', { slug, create: true, frontmatter: fm });
       await loadPosts();
       await openPost(slug);
-      toast('建好了（先当草稿存着，改完把「draft 草稿」改成「否」）');
+      toast('已新建草稿。写完可在「发布状态」中选择发布。');
     } catch (e) {
       toast(e.message, true);
     }
@@ -1412,16 +1422,19 @@
 
   async function uploadCover() {
     if (!S.post) { toast('先在左边打开一篇文章', true); return; }
+    const target = S.post;
     const files = await pickFiles();
-    if (!files.length) return;
+    if (!files.length || S.post !== target) return;
     try {
       const f = files[0];
       const data = await fileToDataURL(f);
       const r = await POST('/api/upload', {
-        data, where: 'post', slug: S.post.slug, name: f.name, max_kb: S.cfg.max_kb || 300,
+        data, where: 'post', slug: target.slug, name: f.name, max_kb: S.cfg.max_kb || 300,
       });
-      $('#f-cover').value = r.rel;
       await loadPosts();
+      if (S.post !== target) return;
+      if ($('#f-cover').value !== r.rel) $('#f-coveralt').value = '';
+      $('#f-cover').value = r.rel;
       renderPostImages();
       if (!$('#f-coveralt').value.trim()) {
         toast(`头图设为 ${r.name} —— 别忘了填 coverAlt（有头图必须写）`, true);
@@ -1448,12 +1461,63 @@
   function togglePreview(force) {
     const pre = $('#preview');
     const show = force === undefined ? pre.style.display === 'none' : force;
+    $('#btn-toggle-preview').setAttribute('aria-pressed', String(show));
     if (show) {
       pre.innerHTML = renderMd($('#f-body').value, S.post?.dir) || '<span class="hint">（正文是空的）</span>';
       pre.style.display = '';
     } else {
       pre.style.display = 'none';
     }
+  }
+
+  function initBodyResize(body, handle) {
+    let active = null;
+    const bounds = () => [
+      parseFloat(getComputedStyle(body).minHeight),
+      parseFloat(getComputedStyle(body).maxHeight),
+    ];
+    const current = () => body.getBoundingClientRect().height;
+    function resize(height) {
+      const [min, max] = bounds();
+      const next = Math.max(min, Math.min(max, height));
+      body.style.height = next + 'px';
+      const applied = Math.round(current());
+      handle.setAttribute('aria-valuemin', String(Math.round(min)));
+      handle.setAttribute('aria-valuemax', String(Math.round(max)));
+      handle.setAttribute('aria-valuenow', String(applied));
+      handle.setAttribute('aria-valuetext', applied + ' 像素');
+    }
+    handle.addEventListener('pointerdown', event => {
+      if (active || event.button !== 0) return;
+      const drag = new AbortController();
+      const id = event.pointerId, startY = event.clientY, height = current();
+      active = drag;
+      handle.setPointerCapture(event.pointerId);
+      document.body.classList.add('resizing-editor');
+      event.preventDefault();
+      const options = { signal: drag.signal };
+      const finish = event => {
+        if (event.type !== 'blur' && event.pointerId !== id) return;
+        drag.abort();
+        active = null;
+        document.body.classList.remove('resizing-editor');
+      };
+      window.addEventListener('pointermove', event => {
+        if (event.pointerId === id) resize(height + event.clientY - startY);
+      }, options);
+      handle.addEventListener('lostpointercapture', finish, options);
+      window.addEventListener('pointerup', finish, options);
+      window.addEventListener('pointercancel', finish, options);
+      window.addEventListener('blur', finish, options);
+    });
+    handle.addEventListener('focus', () => resize(current()));
+    handle.addEventListener('keydown', event => {
+      const [min, max] = bounds();
+      const next = { ArrowUp: current() - 24, ArrowDown: current() + 24, Home: min, End: max }[event.key];
+      if (next === undefined) return;
+      event.preventDefault();
+      resize(next);
+    });
   }
 
   function initWrite() {
@@ -2199,6 +2263,11 @@
   function renderSideFoot() {
     const st = S.state;
     const dot = $('#st-dot');
+    const branch = $('#repo-hint');
+    if (branch) {
+      branch.textContent = st?.branch || '—';
+      branch.title = st?.branch ? '当前分支 ' + st.branch : '分支未知';
+    }
     dot.className = 'dot';
     if (!st) {
       $('#st-branch').textContent = '—';
@@ -2559,6 +2628,7 @@
     initShell();
     initKeys();
     initWrite();
+    initBodyResize($('#f-body'), $('#body-resize'));
     initTags();
     initLog();
     initTalks();

@@ -4,7 +4,7 @@ export const ALBUM_OPTIONS = Object.freeze({
   transition:[['slide','侧向翻入'],['reveal','遮罩显影'],['perspective','轻微透视翻入']],
   stroke:[['arc','长弧引线'],['loop','回环圈注'],['corner','框角折线']],
   weight:[['regular','常规'],['bold','明显']],
-  layout:[['scatter','散片陈列'],['slices','悬浮切片'],['wall','直接看照片墙']],
+  layout:[['scatter','散片陈列'],['slices','悬浮切片'],['dome','Dome Gallery · 照片穹顶'],['infinite','Infinite Menu · 照片星球'],['wall','直接看照片墙'],['willow','Willow 3D · 横向展览']],
 });
 export const ALBUM_PRESETS = Object.freeze([
   {title:'长弧 · 侧翻',arrangement:'left',transition:'slide',stroke:'arc',weight:'bold'},
@@ -21,7 +21,7 @@ export function validateAlbumFields(fields,{publish=false}={}){
   if(!fields||typeof fields!=='object'||Array.isArray(fields))fail('相册资料格式不对');
   for(const key of ['title','titleEn','date'])if(fields[key]!==undefined&&typeof fields[key]!=='string')fail('相册名称、日期和英文标题须为文字');
   if(fields.draft!==undefined&&typeof fields.draft!=='boolean')fail('草稿状态须为布尔值');
-  if(fields.layout!==undefined&&!ALBUM_OPTIONS.layout.some(([key])=>key===fields.layout))fail('layout 只能是 scatter、slices 或 wall');
+  if(fields.layout!==undefined&&!ALBUM_OPTIONS.layout.some(([key])=>key===fields.layout))fail('layout 须为已支持的相册布局');
   if(fields.presentation!==undefined){
     const value=fields.presentation;if(!value||typeof value!=='object'||Array.isArray(value))fail('封面编排须为一组配置');
     for(const key of ['arrangement','transition','stroke','weight'])if(value[key]!==undefined&&!ALBUM_OPTIONS[key].some(([option])=>option!=='auto'&&option===value[key]))fail('请选择已有的封面编排、翻页动作与笔触');

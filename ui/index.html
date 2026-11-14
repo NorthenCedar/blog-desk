@@ -13,18 +13,12 @@
   <aside class="sidebar">
     <div class="titlebar" id="titlebar">
       <div class="lights">
-        <button class="light l-red" id="btn-close" title="关闭">
-          <svg viewBox="0 0 10 10"><path d="M2.5 2.5l5 5M7.5 2.5l-5 5" fill="none"/></svg>
-        </button>
-        <button class="light l-yellow" id="btn-min" title="最小化">
-          <svg viewBox="0 0 10 10"><line x1="2.2" y1="5" x2="7.8" y2="5"/></svg>
-        </button>
-        <button class="light l-green" id="btn-max" title="最大化 / 还原">
-          <svg viewBox="0 0 10 10"><path d="M3 7V3h4" fill="none"/><path d="M7 3l4 4" fill="none"/></svg>
-        </button>
+        <button class="light l-red" id="btn-close" aria-label="关闭" title="关闭"></button>
+        <button class="light l-yellow" id="btn-min" aria-label="最小化" title="最小化"></button>
+        <button class="light l-green" id="btn-max" aria-label="最大化或还原" title="最大化 / 还原"></button>
       </div>
       <span class="grow"></span>
-      <span class="kbd" id="repo-hint">main</span>
+      <span class="branch-badge" id="repo-hint" aria-label="当前分支">main</span>
     </div>
 
     <div class="brand">
@@ -64,66 +58,76 @@
 
       <!-- ── 写作 ── -->
       <section class="view on" data-view="write">
-        <div class="split">
-          <div>
-            <div class="row tight" style="margin-bottom:var(--sp-3)">
+        <div class="split write-split">
+          <div class="write-index">
+            <div class="row tight write-index-head">
               <button class="btn primary sm" id="btn-new-post">＋ 新建文章</button>
               <button class="btn sm" id="btn-refresh-posts">重新读取</button>
             </div>
             <div class="list" id="post-list"></div>
           </div>
 
-          <div class="editor" id="editor-pane">
+          <div class="editor write-sheet" id="editor-pane">
             <div class="empty" id="editor-empty">左边选一篇文章，或新建一篇。</div>
 
             <div id="editor-form" style="display:none" class="stack">
               <div class="row">
-                <label class="field grow"><span>title 标题</span>
+                <label class="field grow write-title"><span>文章标题</span>
                   <input type="text" id="f-title" placeholder="文章标题"></label>
-                <label class="field"><span>date 首发</span>
+                <label class="field"><span>首发日期</span>
                   <input type="date" id="f-date"></label>
-                <label class="field"><span>draft 草稿</span>
-                  <select id="f-draft"><option value="false">否（发布）</option><option value="true">是（草稿）</option></select></label>
+                <label class="field"><span>发布状态</span>
+                  <select id="f-draft"><option value="false">发布</option><option value="true">草稿</option></select></label>
               </div>
 
-              <label class="field"><span>summary 摘要（≤ 80 字，纯文本）</span>
-                <textarea id="f-summary" rows="2" maxlength="80" placeholder="列表页摘要 + meta description"></textarea></label>
-
-              <div class="row spread">
-                <div class="stack" style="gap:6px">
-                  <span style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted)">tags 标签（1–3 个，须已登记）</span>
-                  <div class="chips" id="tag-chips"></div>
-                </div>
-                <span class="hint" id="summary-count">0 / 80</span>
-              </div>
+              <label class="field"><span class="field-caption">文章摘要 <output class="hint" id="summary-count" for="f-summary">0 / 80</output></span>
+                <textarea id="f-summary" rows="2" maxlength="80" placeholder="用于文章列表和搜索摘要"></textarea></label>
 
               <div class="row">
-                <label class="field grow"><span>slug（URL，英文小写）</span>
+                <div class="stack" style="gap:6px">
+                  <span class="hint">标签（1–3 个）</span>
+                  <div class="chips" id="tag-chips"></div>
+                </div>
+              </div>
+
+              <details class="write-details">
+                <summary>文章设置</summary>
+                <div class="stack write-details-body">
+              <div class="row">
+                <label class="field grow"><span>文章路径</span>
                   <input type="text" id="f-slug" placeholder="my-new-post" readonly></label>
-                <label class="field grow"><span>updated 更新于（可空）</span>
+                <label class="field grow"><span>更新日期（可空）</span>
                   <input type="date" id="f-updated"></label>
               </div>
 
               <div class="row" style="align-items:flex-end">
-                <label class="field grow"><span>cover 头图（相对本文目录，可空）</span>
+                <label class="field grow"><span>文章封面（相对本文目录，可空）</span>
                   <input type="text" id="f-cover" placeholder="./cover.jpg"></label>
-                <button class="btn sm" id="btn-cover-img" title="上传一张并自动填进 cover">上传头图</button>
+                <button class="btn sm" id="btn-cover-img">上传封面</button>
               </div>
-              <label class="field"><span>coverAlt 头图说明（有 cover 必填，给读屏和不显示图时用）</span>
+              <label class="field"><span>从本文目录选择封面</span><select id="post-cover-pick"><option value="">选择图片</option></select></label>
+              <label class="field"><span>封面说明（有封面时必填）</span>
                 <input type="text" id="f-coveralt" placeholder="图里是什么"></label>
+                </div>
+              </details>
 
-              <div class="hr"></div>
-
-              <div class="row spread">
-                <div class="row tight">
-                  <button class="btn sm" id="btn-insert-img">＋ 插入图片</button>
-                  <button class="btn sm" id="btn-insert-video">＋ 插入视频</button>
-          <button class="btn sm" id="btn-insert-audio" title="MP3 / WAV，插入一条可播放的音频">＋ 插入音频</button>
-                  <button class="btn sm" id="btn-toggle-preview">预览</button>
-                  <button class="btn sm" id="btn-insert-link">插入链接</button>
+              <div class="write-body-head">
+                <label for="f-body">正文</label>
+                <button class="btn sm" id="btn-toggle-preview" aria-controls="preview" aria-pressed="false">预览</button>
+              </div>
+              <div class="write-toolbar" aria-label="正文工具">
+                <div class="write-toolgroup" role="group" aria-label="插入">
+                  <button class="btn sm" id="btn-insert-img">插图</button>
+                  <button class="btn sm" id="btn-insert-video">视频</button>
+                  <button class="btn sm" id="btn-insert-audio" title="MP3 / WAV，插入一条可播放的音频">音频</button>
+                  <button class="btn sm" id="btn-insert-link">链接</button>
+                </div>
+                <div class="write-toolgroup" role="group" aria-label="行内格式">
                   <button class="btn sm" data-body-inline="strong" title="选中文字后切换加粗，Ctrl+B">加粗</button>
                   <button class="btn sm" data-body-inline="em" title="选中文字后切换斜体，Ctrl+I">斜体</button>
                   <button class="btn sm" data-body-inline="strike" title="选中文字后切换删除线，Ctrl+Shift+X">删除线</button>
+                </div>
+                <div class="write-toolgroup" role="group" aria-label="段落格式">
                   <button class="btn sm" data-body-level="0" title="将当前段落或选中的行设为普通正文">正文</button>
                   <button class="btn sm" data-body-level="2" title="章节标题，发布后进入本文目录">章节标题</button>
                   <button class="btn sm" data-body-level="3" title="小标题，发布后进入本文目录">小标题</button>
@@ -140,22 +144,24 @@
                     <option value="" id="code-language-original" hidden>原语言</option>
                   </select>
                 </div>
-                <span class="hint">选中多行可合成代码块；块内改语言，点正文还原；Ctrl+Z 撤销。标题发布时生成目录；视频最多 25 MiB</span>
               </div>
 
-              <div class="stack" style="gap:6px">
-                <span style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted)">
-                  本文目录里已有的图 —— 点一下插到光标处
-                </span>
+              <div class="write-images">
+                <span class="hint">本文图片 · 点击插入正文</span>
                 <div class="thumbs" id="post-imgs"></div>
               </div>
 
-              <textarea id="f-body" class="md-editor" placeholder="正文…"></textarea>
+              <div class="write-textbox">
+                <textarea id="f-body" class="md-editor" placeholder="正文…"></textarea>
+                <div class="write-resize" id="body-resize" tabindex="0" role="separator" aria-orientation="horizontal"
+                     aria-label="调整正文编辑区高度" aria-controls="f-body" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
+                     title="拖动调整高度，也可按上下方向键"></div>
+              </div>
               <div class="preview" id="preview" style="display:none"></div>
 
-              <div class="row spread">
+              <div class="row spread write-actions">
                 <div class="row tight">
-                  <button class="btn primary" id="btn-save">保存 <span class="kbd">Ctrl+S</span></button>
+                  <button class="btn primary" id="btn-save">保存 <kbd class="kbd">Ctrl+S</kbd></button>
                   <button class="btn" id="btn-save-close">保存并去发布</button>
                 </div>
                 <button class="btn danger sm" id="btn-del-post">删除这篇文章</button>

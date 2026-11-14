@@ -18,6 +18,7 @@ from lib import gitops, proc
 FIELDS = ('title', 'titleEn', 'date', 'draft', 'images', 'layout', 'cover', 'presentation')
 OPTIONS = dict(arrangement=['left','right','wide'], transition=['slide','reveal','perspective'],
                stroke=['arc','loop','corner'], weight=['regular','bold'])
+ALBUM_LAYOUTS = ('scatter', 'slices', 'dome', 'infinite', 'wall', 'willow')
 
 def preserve_patch(original, fields):
     """复用 Forge YAML patch；仅变化行使用邻近行尾，其余行及正文原字节保留。"""
@@ -114,7 +115,7 @@ class Gallery(Forge):
                     transition='slide', stroke='arc', weight='bold')
 
     def validate(self,slug,fields,publish=False):
-        if fields.get('layout','scatter') not in ('scatter','slices','wall'): raise ContentError('请选择已有相册布局')
+        if fields.get('layout','scatter') not in ALBUM_LAYOUTS: raise ContentError('请选择已有相册布局')
         if 'draft' in fields and type(fields['draft']) is not bool: raise ContentError('draft 必须为布尔值')
         for key in ('title','titleEn','date','cover'):
             if key in fields and not isinstance(fields[key],str): raise ContentError(f'{key} 必须是文字')

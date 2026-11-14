@@ -99,13 +99,12 @@
       dispose();const f=fields();f.images??=[];
       $('#album-editor').innerHTML=`<div class="row spread"><b>${esc(session.current.slug)}</b><span id="album-status" role="status">${session.dirty?'有未保存的修改':session.current.create?'新草稿':'已读取'}</span></div>
       <div class="row"><label class="field grow"><span>相册名称</span><input data-field="title" value="${esc(f.title||'')}"></label><label class="field grow"><span>英文标题</span><input data-field="titleEn" value="${esc(f.titleEn||'')}"></label><label class="field"><span>日期</span><input type="date" data-field="date" value="${esc(f.date||'')}"></label></div>
-      <div class="row"><label class="field"><span>册内布局</span><select id="album-layout"><option value="scatter">散片陈列</option><option value="slices">悬浮切片</option><option value="wall">直接看照片墙</option></select></label><label><input type="checkbox" id="album-draft" ${f.draft?'checked':''}>草稿（不公开）</label><button class="btn" id="album-upload">批量上传照片</button></div>
+      <div class="row"><label class="field"><span>册内布局</span><select id="album-layout" disabled></select></label><label><input type="checkbox" id="album-draft" ${f.draft?'checked':''}>草稿（不公开）</label><button class="btn" id="album-upload">批量上传照片</button></div>
       <div id="album-images" class="stack"></div><p class="hint">拖动或用按钮排序；封面独立选择。移除只解除引用，原图保留。</p>
       <h3>封面整套编排</h3><div id="album-presets" class="row"></div><details><summary>进一步调整</summary><div id="album-adjust" class="row"></div></details>
       <div class="row"><button class="btn" id="album-recommend">重新推荐</button><button class="btn primary" id="album-save">保存草稿 / 修改</button><button class="btn" id="album-prepare">准备本册发布</button><button class="btn" id="album-publish" disabled>确认发布本册</button></div>
       <div id="album-preview"></div><pre id="album-result" style="white-space:pre-wrap"></pre>`;
       for(const input of document.querySelectorAll('[data-field]'))input.oninput=()=>{f[input.dataset.field]=input.value;changed()};
-      $('#album-layout').value=f.layout||'scatter';$('#album-layout').onchange=e=>{f.layout=e.target.value;changed()};
       $('#album-draft').onchange=e=>{f.draft=e.target.checked;changed()};
       $('#album-save').onclick=safe(save);
       $('#album-upload').onclick=safe(async()=>{
@@ -142,8 +141,14 @@
     async function mount(){
       const target=session.current,token=previewToken;
       try{
-        module??=await import('/album-shared/scripts/album-cover-preview.js');
         config??=await import('/album-shared/lib/album-presentation.mjs');
+        if(target!==session.current||token!==previewToken)return;
+        const layout=$('#album-layout');
+        for(const [value,text] of config.ALBUM_OPTIONS.layout)layout.add(new Option(text,value));
+        layout.value=fields().layout||'scatter';
+        layout.disabled=false;
+        layout.onchange=()=>{fields().layout=layout.value;changed()};
+        module??=await import('/album-shared/scripts/album-cover-preview.js');
         if(target!==session.current||token!==previewToken)return;
         preview=module.mountCoverPreview($('#album-preview'),{fields:previewFields(),resolveImage:imageURL,index:target.presentationIndex||0});
         for(const preset of config.ALBUM_PRESETS){

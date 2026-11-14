@@ -149,6 +149,10 @@ python app.py --repo "D:\path\to\your\blog-repo"
 `.gitignore` 已经把 `config.json` 挡在版本库之外。如果你是在别处 clone 的
 这份代码，**第一步永远是先 `copy config.example.json config.json`**。
 
+## 写作界面
+
+界面分为左侧黑色导航和右侧米白工作区。在支持桌面亚克力的 Windows 11 上，开启系统透明效果时会模糊后方窗口，并透出少量底色。最大化使用当前显示器的工作区，保留任务栏。封面和链接路径在「文章设置」。写作和造物台正文框右下角的双线把手可拖动调高度，也可以按 Tab 聚焦后用上下方向键调节。保存快捷键为 Ctrl+S，左上角显示当前 Git 分支。
+
 ## 打包成 exe（可选）
 
 ```bash
