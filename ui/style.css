@@ -153,7 +153,7 @@ html, body {
   z-index: 2;
 }
 
-/* 纯色窗控。退出键常亮，其余两枚在靠近标题栏时提亮。 */
+/* 纯色窗控。三枚常态全亮（站主 2026-11-14：不要"只有红灯亮、移上去才三灯全亮"）。 */
 .lights { display: flex; gap: 8px; -webkit-app-region: no-drag; }
 .light {
   width: 12px; height: 12px; border-radius: 50%;
@@ -164,10 +164,8 @@ html, body {
   position: relative;
 }
 .light.l-red { background: var(--tl-red); }
-.light.l-yellow { background: color-mix(in srgb, var(--tl-yellow) 72%, var(--desk-dark)); }
-.light.l-green { background: color-mix(in srgb, var(--tl-green) 72%, var(--desk-dark)); }
-.titlebar:is(:hover, :focus-within) .l-yellow { background: var(--tl-yellow); }
-.titlebar:is(:hover, :focus-within) .l-green { background: var(--tl-green); }
+.light.l-yellow { background: var(--tl-yellow); }
+.light.l-green { background: var(--tl-green); }
 .light:focus-visible { outline-color: var(--on-band); }
 
 .brand { padding: var(--sp-1) var(--sp-4) var(--sp-5); position: relative; z-index: 2; }
