@@ -932,6 +932,7 @@
     album: '',
     photos: [],
     comments: [],
+    bodyEditor: null,  // 正文可视化编辑器（vendor/writer-body.js 那一套）
   };
 
   const forgeEditor = window.DeskForge?.create({ GET, POST, esc, toast, askForm, askConfirm,
@@ -1185,6 +1186,7 @@
     $('#f-cover').value = fm.cover || '';
     $('#f-coveralt').value = fm.coverAlt || '';
     $('#f-body').value = S.post.body;
+    mountBodyEditor();
     $('#preview').style.display = 'none';
     $('#btn-toggle-preview').setAttribute('aria-pressed', 'false');
 
@@ -1229,7 +1231,7 @@
       b.title = `插入 ![](${altFromName(name)}) —— ${name}`;
       b.innerHTML = `<img src="/api/file?path=${encodeURIComponent(dir + '/' + name)}" alt="${esc(name)}">`;
       b.addEventListener('click', () => {
-        insertAtCursor($('#f-body'), `![${altFromName(name)}](./${name})`);
+        insertBody(`![${altFromName(name)}](./${name})`, true);
         toast('已插到光标处');
       });
       box.appendChild(b);
@@ -1238,6 +1240,7 @@
 
   /** 收集表单 → frontmatter。★ 以原 frontmatter 为底，保住 slug 之类表单没有的键。 */
   function collectPost() {
+    if (S.bodyEditor) $('#f-body').value = S.bodyEditor.getMarkdown();
     const fm = Object.assign({}, S.post.frontmatter);
     const setOrDrop = (k, v) => {
       if (v === '' || v === undefined || v === null) delete fm[k];
@@ -1383,7 +1386,7 @@
         const r = await POST('/api/upload', {
           data, where: 'post', slug: S.post.slug, name: f.name, max_kb: S.cfg.max_kb || 300,
         });
-        insertAtCursor($('#f-body'), `![${altFromName(f.name)}](${r.rel})`);
+        insertBody(`![${altFromName(f.name)}](${r.rel})`, true);
         toast(`${r.name}：${(r.report && r.report.note) || '已入库'}`, false);
       } catch (e) {
         toast(`${f.name} 没进去：${e.message}`, true);
@@ -1432,7 +1435,7 @@
         toast('视频已入库，但编辑对象已变化；未插入其他内容，请重新选择原条目', true);
         return;
       }
-      if (where === 'post') insertAtCursor($('#f-body'), `\n\n${videoMarkup(uploaded.src, caption)}\n\n`);
+      if (where === 'post') insertBody(`\n\n${videoMarkup(uploaded.src, caption)}\n\n`, true);
       else {
         const item = S.talks.items[S.talkIdx];
         (item.videos ||= []).push({src:uploaded.src, alt:caption});
@@ -1472,7 +1475,7 @@
         toast('语音已入库，但编辑对象已变化；未插入其他内容，请重新选择原条目', true);
         return;
       }
-      if (where === 'post') insertAtCursor($('#f-body'), `\n\n${audioLine(uploaded.src, label)}\n\n`);
+      if (where === 'post') insertBody(`\n\n${audioLine(uploaded.src, label)}\n\n`, true);
       else {
         const item = S.talks.items[S.talkIdx];
         (item.audio ||= []).push({ src: uploaded.src, label });
@@ -1517,7 +1520,7 @@
     if (!v) return;
     const url = String(v.url || '').trim();
     if (!url) return toast('地址不能空', true);
-    insertAtCursor($('#f-body'), `[${String(v.text || '').trim() || url}](${url})`);
+    insertBody(`[${String(v.text || '').trim() || url}](${url})`);
   }
 
   function togglePreview(force) {
@@ -1530,6 +1533,68 @@
     } else {
       pre.style.display = 'none';
     }
+  }
+
+  /* ══════════════════ 视觉编辑：复用云端写作台那套编辑器 ══════════════════
+     #f-body 仍是唯一事实来源：编辑器每次改动都写回它并派发 input，
+     保存 / 预览 / 脏检查都不需要认识编辑器。bundle 没加载时回落到原生文本框。 */
+
+  function bodyImageURL(source) {
+    const dir = S.post && S.post.dir;
+    if (!dir || !source) return null;
+    if (/^(?:[a-z]+:)?\/\//i.test(source) || source.startsWith('data:') || source.startsWith('blob:')) return null;
+    const rel = source.replace(/^\.\//, '').replace(/^\//, '');
+    return `/api/file?path=${encodeURIComponent(`${dir}/${rel}`)}`;
+  }
+
+  async function uploadBodyImages(files) {
+    if (!S.post || !files || !files.length) return;
+    for (const f of files) {
+      try {
+        const data = await fileToDataURL(f);
+        const r = await POST('/api/upload', {
+          data, where: 'post', slug: S.post.slug, name: f.name, max_kb: S.cfg.max_kb || 300,
+        });
+        insertBody(`![${altFromName(f.name)}](${r.rel})`, true);
+        toast(`${r.name}：${(r.report && r.report.note) || '已入库'}`, false);
+      } catch (e) {
+        toast(`${f.name} 没进去：${e.message}`, true);
+      }
+    }
+    await loadPosts();
+    renderPostImages();
+  }
+
+  function mountBodyEditor() {
+    const host = $('#body-visual');
+    const api = window.WriterDesk;
+    if (!host || !api || typeof api.mountWriterBody !== 'function' || !$('#f-body')) return null;
+    if (S.bodyEditor) { S.bodyEditor.destroy(); S.bodyEditor = null; }
+    // 每篇重挂：编辑器把工具栏/正文根节点直接追加进 host，不先清掉就会越挂越多，
+    // 旧实例的 Markdown 源码框还留在文档里，输入与焦点会落到看不见的那一份上。
+    while (host.firstChild) host.removeChild(host.firstChild);
+    const editor = api.mountWriterBody(host, $('#f-body').value, {
+      onChange: () => {
+        const md = S.bodyEditor ? S.bodyEditor.getMarkdown() : $('#f-body').value;
+        if (!$('#f-body') || $('#f-body').value === md) return;
+        $('#f-body').value = md;
+        $('#f-body').dispatchEvent(new Event('input', { bubbles: true }));
+      },
+      onImageFiles: files => { uploadBodyImages(files); },
+      resolveImage: bodyImageURL,
+      onError: error => toast((error && error.message) || '格式操作没成功', true),
+    });
+    S.bodyEditor = editor;
+    window.__deskBodyEditor = editor;  // 界面测试用：验证正文改动确实同步进了 #f-body
+    host.hidden = false;
+    document.body.classList.add('has-body-editor');
+    return editor;
+  }
+
+  /** 正文插入的唯一入口：有编辑器就交给它决定（块级内容 / 源码附件行），否则回落到文本框。 */
+  function insertBody(markdown, block) {
+    if (S.bodyEditor) { S.bodyEditor.insertText(markdown, Boolean(block)); return; }
+    insertAtCursor($('#f-body'), markdown);
   }
 
   function initBodyResize(body, handle) {

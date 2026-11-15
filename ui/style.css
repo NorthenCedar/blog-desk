@@ -245,10 +245,18 @@ html, body {
 
 /* ══════════════════ 工作区 ══════════════════ */
 .work { overflow: hidden; min-width: 0; display: flex; flex-direction: column; background: var(--desk-frost); }
-/* 底下的颜色由 Windows 亚克力模糊，前景文字仍按正常不透明度绘制。 */
+/* 底下的颜色由 Windows 亚克力模糊，前景文字仍按正常不透明度绘制。
+   2026-11-15 站主：再透一点。工作面 62% → 50%，侧栏 73% → 65%，
+   输入/编辑纸面 83% → 72%；再低正文对比度会掉，先停在这。
+   2026-11-16 站主：再透一档。工作面 50% → 44%，侧栏 65% → 58%，
+   纸面 72% → 65%，写稿操作条 80% → 72%。 */
+.native-acrylic {
+  --desk-field: #fafaf7a6;
+}
 .native-acrylic, .native-acrylic body, .native-acrylic #app { background: transparent; }
-.native-acrylic .sidebar { background: linear-gradient(160deg, #ffffff0b, transparent 54%), #101413bb; }
-.native-acrylic .work { background: linear-gradient(135deg, #ffffff16, transparent 24%), #f5f3eb9e; }
+.native-acrylic .sidebar { background: linear-gradient(160deg, #ffffff0b, transparent 54%), #10141394; }
+.native-acrylic .work { background: linear-gradient(135deg, #ffffff16, transparent 24%), #f5f3eb70; }
+.native-acrylic .write-actions { background: #f5f3ebb8; }
 .work-head {
   display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--sp-1) var(--sp-4);
   padding: var(--sp-3) clamp(16px, 2.2vw, 34px);

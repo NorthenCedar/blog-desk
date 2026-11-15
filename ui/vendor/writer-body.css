@@ -1,0 +1,256 @@
+/*
+ * 云端写作台「可视化正文编辑器」在桌面端的外壳样式。
+ * 结构与 blog/src/styles/writer.css 的 .writer-* 一致，但只用桌面端自己的 token
+ * （ui/style.css 里的 --paper/--ink/--hair/--accent/--sp-*/--desk-*），
+ * 不搬站点级规则（通配 box-sizing、html 背景那几条在桌面端会打架）。
+ */
+
+.writer-body-label {
+  font-weight: 600;
+  margin: 0;
+}
+
+/* 三排工具：模式切换 / 常驻（代码块、圆点、语言）/ 行内与段落格式 */
+.writer-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 0;
+}
+
+.writer-toolbar .writer-block-label {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding-inline: var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.writer-toolbar button,
+.writer-link-form button,
+.writer-toolbar .writer-block-type,
+.writer-toolbar .writer-code-language,
+.writer-link-form input {
+  border: 1px solid transparent;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 6px;
+  padding: 3px var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.writer-toolbar .writer-block-type,
+.writer-toolbar .writer-code-language,
+.writer-link-form input {
+  border-color: var(--hair);
+  background: var(--paper);
+  cursor: default;
+}
+
+.writer-toolbar button:hover:not(:disabled) {
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+}
+
+.writer-toolbar button[aria-pressed='true'] {
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+
+.writer-toolbar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.writer-format {
+  border-top: 1px solid var(--hair);
+  border-bottom: 1px solid var(--hair);
+  padding: 2px 0;
+}
+
+.writer-note {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+/* 正文编辑区：高度对齐左侧源码框，长文内部滚动 */
+.writer-visual {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: clamp(300px, 49dvh, 575px);
+  max-height: max(300px, 80dvh);
+  overflow: auto;
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--desk-rim);
+  border-radius: 12px;
+  background: var(--desk-field);
+  color: var(--ink);
+  font-size: var(--fs-body);
+  line-height: 1.8;
+  white-space: pre-wrap;
+  white-space: break-spaces;
+  overflow-wrap: anywhere;
+  outline: none;
+}
+
+.writer-visual:focus-within {
+  border-color: var(--accent);
+}
+
+.writer-visual > :first-child {
+  margin-top: 0;
+}
+
+.writer-visual h2 {
+  font-family: Archivo, sans-serif;
+  font-size: var(--fs-h2);
+  line-height: 1.35;
+  margin: var(--sp-5) 0 var(--sp-3);
+}
+
+.writer-visual h3 {
+  font-family: Archivo, sans-serif;
+  font-size: var(--fs-h3);
+  line-height: 1.4;
+  margin: var(--sp-4) 0 var(--sp-2);
+}
+
+.writer-visual p {
+  margin: var(--sp-3) 0;
+}
+
+.writer-visual ul,
+.writer-visual ol {
+  padding-left: var(--sp-5);
+  margin: var(--sp-3) 0;
+}
+
+.writer-visual pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: var(--sp-3);
+  border-radius: 8px;
+  background: var(--code-bg, var(--panel));
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: var(--fs-sm);
+}
+
+.writer-visual code {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.92em;
+  background: var(--code-bg, var(--panel));
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+.writer-visual pre code {
+  background: none;
+  padding: 0;
+}
+
+.writer-visual blockquote {
+  margin: var(--sp-3) 0;
+  padding-left: var(--sp-4);
+  border-left: 3px solid var(--accent);
+  color: var(--muted);
+}
+
+.writer-inline-image {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+.writer-inline-image img {
+  display: block;
+  max-width: 100%;
+  max-height: 340px;
+  height: auto;
+  object-fit: contain;
+  border-radius: 6px;
+}
+
+.writer-visual .ProseMirror-selectednode {
+  outline: 2px solid var(--accent);
+}
+
+.writer-visual.ProseMirror-hideselection {
+  caret-color: transparent;
+}
+
+.writer-visual.ProseMirror-hideselection *::selection {
+  background: transparent;
+}
+
+.writer-visual img.ProseMirror-separator {
+  display: inline !important;
+  border: 0 !important;
+  margin: 0 !important;
+}
+
+.writer-link-form {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  padding: var(--sp-2) 0;
+}
+
+.writer-link-form label {
+  display: grid;
+  gap: 2px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.writer-link-form .writer-field {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.writer-link-form input {
+  width: 100%;
+  padding: 4px var(--sp-2);
+  font-size: var(--fs-sm);
+}
+
+/* 源码模式：沿用桌面端原有的等宽文本框，只是换成可视化编辑器同一套外框 */
+.writer-body {
+  display: block;
+  width: 100%;
+  min-height: clamp(300px, 49dvh, 575px);
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--desk-rim);
+  border-radius: 12px;
+  background: var(--desk-field);
+  color: var(--ink);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: var(--fs-sm);
+  line-height: 1.85;
+  tab-size: 2;
+  resize: vertical;
+}
+/* 编辑器接上以后，桌面端原来的 Markdown 文本框与格式按钮让位：
+   编辑器自带同一套（更全的）工具栏，两套并排会互相打架；
+   bundle 没加载时这里不生效，原生文本框照旧可用。 */
+.has-body-editor .write-textbox #f-body,
+.has-body-editor .write-textbox #body-resize {
+  display: none;
+}
+
+.has-body-editor .write-toolbar .write-toolgroup[aria-label="行内格式"],
+.has-body-editor .write-toolbar .write-toolgroup[aria-label="段落格式"] {
+  display: none;
+}
+
+.write-visual-host:not([hidden]) {
+  display: block;
+}

@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>写作台 · 北杉札记</title>
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/vendor/writer-body.css">
 </head>
 <body>
 <div id="app">
@@ -153,6 +154,7 @@
               </div>
 
               <div class="write-textbox">
+                <div id="body-visual" class="write-visual-host" hidden></div>
                 <textarea id="f-body" class="md-editor" placeholder="正文…"></textarea>
                 <div class="write-resize" id="body-resize" tabindex="0" role="separator" aria-orientation="horizontal"
                      aria-label="调整正文编辑区高度" aria-controls="f-body" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
@@ -444,6 +446,7 @@
 <script src="/forge.js"></script>
 <script src="/gallery.js"></script>
 <link rel="stylesheet" href="/album-shared/styles/album-cover-preview.css">
+<script src="/vendor/writer-body.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>
