@@ -436,6 +436,38 @@
     return { lines, blocks };
   }
 
+  // 行首圆点：给选中的每一行加 "- "，整段都已有圆点时再次点击取消；空行、代码与缩进代码不动。
+  function formatBodyBullet(body, start, end) {
+    if (start === end && !body.trim()) return { body:'- ', start:2, end:2 };
+    const { lines, blocks } = bodyCodeBlocks(body);
+    const first = Math.max(0, lines.findLastIndex(line => line.offset <= start));
+    const last = Math.max(first, lines.findLastIndex(line => line.offset < end || line.offset <= start));
+    const inCode = index => blocks.some(block => index >= block.first && index <= block.last)
+      || /^(?:(?: {0,3}>[ \t]?)+)?(?: {4}|\t)/.test(lines[index].text);
+    const targets = [];
+    for (let index = first; index <= last; index++) {
+      const line = lines[index].text;
+      // 空行、代码/缩进代码、标题、引用与表格不动：加圆点只会把这些行写坏。
+      if (!line.trim() || inCode(index) || /^\s*(?:[#<>|]|`{3,}|~{3,})/.test(line)) continue;
+      targets.push(index);
+    }
+    if (!targets.length) return { body, start, end, error:'选中的行是空行、代码、标题或引用，圆点未改动。' };
+    const remove = targets.every(index => /^- /.test(lines[index].text));
+    const steps = new Map(targets.map(index => [index, remove ? -2 : (/^- /.test(lines[index].text) ? 0 : 2)]));
+    const text = lines.map((line, index) => {
+      const step = steps.get(index);
+      if (step === undefined) return line.text + line.newline;
+      if (remove) return line.text.slice(2) + line.newline;
+      return (step ? '- ' : '') + line.text + line.newline;
+    }).join('');
+    const map = position => {
+      let delta = 0;
+      for (const [index, step] of steps) if (position > lines[index].offset) delta += step;
+      return Math.max(0, position + delta);
+    };
+    return { body:text, start:map(start), end:map(end) };
+  }
+
   function applyBodyEdit(body, result) {
     if (result.error) { toast(result.error, true); return; }
     body.focus();
@@ -506,6 +538,11 @@
      图片路径：正文写 `![](./名字.jpg)`（相对文章目录）⇒ 换成 /api/file?path=<绝对路径>。
      ★ 先抽代码块/行内代码，再转义 HTML —— 顺序反了就会把代码里的 < > 当标签。 */
 
+  /* ★ 2026-11-16：反斜杠转义的说明见 renderMd 后面的 mdProtectEscapes。
+     转义辅助函数必须紧跟在 renderMd 之后（中间不能插分节注释块），因为
+     _test_soft_break.cjs 和 _test_code_block.cjs 靠「renderMd 函数体 + 到下一个
+     分节注释为止」这段切片来单测渲染器；放在前面就会被截在切片之外。 */
+
   function renderMd(src, baseDir) {
     const fences = [];
     const inlines = [];
@@ -564,21 +601,18 @@
       return '/api/file?path=' + encodeURIComponent(dir + '/' + rel);
     };
 
+    // ★ 2026-11-16：强调规则搬到 mdEmphasis 里，为的是先处理反斜杠转义（见上面的注释）。
+    //   占位符顺序不变：链先占位、再强调、最后行内代码。
     const inline = (t) =>
-      t
-        .replace(/\u0000L(\d+)\u0000/g, (_m, i) => {
+      mdEmphasis(
+        t.replace(/\u0000L(\d+)\u0000/g, (_m, i) => {
           const L = links[+i];
           if (!L) return '';
           return L.img
             ? `<img src="${esc(imgURL(L.u))}" alt="${esc(L.alt || '')}" loading="lazy">`
             : `<a href="${esc(L.u)}" target="_blank" rel="noopener noreferrer">${esc(L.txt)}</a>`;
         })
-        .replace(/\*\*\*([^*\n]+)\*\*\*/g, '<strong><em>$1</em></strong>')
-        .replace(/\*\*([^\n]+?)\*\*/g, '<strong>$1</strong>')
-        .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
-        .replace(/~~([^~]+)~~/g, '<del>$1</del>')
-        .replace(/&lt;(\/?)del&gt;/g,'<$1del>')
-        .replace(/\u0000I(\d+)\u0000/g, (_m, i) => `<code>${esc(inlines[+i])}</code>`);
+      ).replace(/\u0000I(\d+)\u0000/g, (_m, i) => `<code>${esc(inlines[+i])}</code>`);
 
     const lines = s.split('\n');
     const out = [];
@@ -697,6 +731,34 @@
     }
     flushAll();
     return out.join('\n');
+  }
+
+  // ★ 2026-11-16 反斜杠转义（站主报「预览里 int \*a 漏反斜杠、int\* p 照样斜体」）。
+  //   站上是 CommonMark：反斜杠 + ASCII 标点 = 字面字符，转义过的星号不参与强调配对。
+  //   预览原来只有三条强调正则、不认识反斜杠 —— 于是 \* 既把反斜杠漏出来，又照样和
+  //   句子后面另一个星号配成 <em>。这里按 CommonMark 的规矩把转义抽成占位符
+  //   （占位符里没有星号，配不成对），走完强调规则再原样还原。
+  //   注意 renderMd 里 esc() 在前，所以 < > & " 那时已经变成实体，这几种按实体还原。
+  //   这两个函数必须紧跟在 renderMd 之后、下一段 /* 分节注释之前：_test_soft_break.cjs
+  //   与 _test_code_block.cjs 靠 `function renderMd(` → 下一个 `\n  /*` 截取渲染器。
+  function mdProtectEscapes(text, store) {
+    return String(text)
+      .replace(/\\(&lt;|&gt;|&amp;|&quot;|&#39;)/g, (_m, entity) => entity)
+      .replace(/\\([\\`*_{}[\]()#+\-.!|~:;,<>$&"'])/g, (_m, ch) => {
+        store.push(ch);
+        return `\u0000E${store.length - 1}\u0000`;
+      });
+  }
+
+  function mdEmphasis(text) {
+    const store = [];
+    return mdProtectEscapes(text, store)
+      .replace(/\*\*\*([^*\n]+)\*\*\*/g, '<strong><em>$1</em></strong>')
+      .replace(/\*\*([^\n]+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[^*])\*([^*\n]+)\*/g, (_m, lead, inner) => `${lead}<em>${inner}</em>`)
+      .replace(/~~([^~]+)~~/g, '<del>$1</del>')
+      .replace(/&lt;(\/?)del&gt;/g, '<$1del>')
+      .replace(/\u0000E(\d+)\u0000/g, (_m, i) => store[+i] ?? '');
   }
 
   /* ══════════════════ 五、桌面窗口桥 ══════════════════ */
@@ -1560,6 +1622,13 @@
     $$('[data-body-inline]').forEach(button => {
       button.addEventListener('mousedown', event => event.preventDefault());
       button.addEventListener('click', () => applyInline(button.dataset.bodyInline));
+    });
+    const applyBullet = () => {
+      if (ready()) applyBodyEdit(body, formatBodyBullet(body.value, body.selectionStart, body.selectionEnd));
+    };
+    $$('[data-body-bullet]').forEach(button => {
+      button.addEventListener('mousedown', event => event.preventDefault());
+      button.addEventListener('click', () => applyBullet());
     });
     body.addEventListener('keydown', event => {
       if (!(event.ctrlKey || event.metaKey) || event.altKey) return;

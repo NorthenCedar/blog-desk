@@ -27,6 +27,11 @@ context.esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;'
 context.videoMarkup = () => '<video></video>';
 
 vm.runInContext(sliceFunction('bodyCodeBlocks'), context);
+// 2026-11-16：renderMd 的强调规则改成先走 mdProtectEscapes（反斜杠转义），
+// 这两个 helper 是同级的独立声明，按函数边界切片时要单独装进沙箱。
+for (const helper of ['mdProtectEscapes', 'mdEmphasis']) {
+  if (source.indexOf(`  function ${helper}(`) > 0) vm.runInContext(sliceFunction(helper), context);
+}
 vm.runInContext(sliceFunction('renderMd'), context);
 const render = (src) => context.renderMd(src, '');
 
