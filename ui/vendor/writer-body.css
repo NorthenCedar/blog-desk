@@ -105,6 +105,14 @@
   border-color: var(--accent);
 }
 
+/* 滚动条本身不是正文：拖动它时不要显示文本光标（站主 2026-11-16 反馈）。 */
+.writer-visual::-webkit-scrollbar,
+.writer-visual::-webkit-scrollbar-track,
+.writer-visual::-webkit-scrollbar-thumb,
+.writer-visual::-webkit-resizer {
+  cursor: default;
+}
+
 .writer-visual > :first-child {
   margin-top: 0;
 }

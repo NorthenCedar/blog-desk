@@ -19916,6 +19916,170 @@ var WriterDesk = (() => {
     return { body, start: map3(start), end: map3(end) };
   }
 
+  // ../blog/src/scripts/writer/source-format.ts
+  var MARKERS = { strong: "**", em: "*", strike: "~~" };
+  var clamp = (value, max) => Math.max(0, Math.min(value, max));
+  function lineTargets(raw, start, end) {
+    const lines = textLines(raw);
+    const first = Math.max(0, lines.findLastIndex((line) => line.offset <= start));
+    const last = Math.max(first, lines.findLastIndex((line) => line.offset < end || line.offset <= start));
+    const code3 = codeLines(lines.map((line) => line.text));
+    const targets = [];
+    for (let index = first; index <= last; index++) {
+      const text2 = lines[index].text;
+      if (!text2.trim() || code3[index]) continue;
+      targets.push(index);
+    }
+    return { lines, targets };
+  }
+  function mapPosition(lines, steps, position) {
+    let delta = 0;
+    for (const [index, step] of steps) {
+      if (position > lines[index].offset) delta += step;
+      else if (position === lines[index].offset) delta += Math.max(0, step);
+    }
+    return Math.max(0, position + delta);
+  }
+  function rebuild(lines, steps, convert) {
+    return lines.map((line, index) => {
+      const step = steps.get(index);
+      return step === void 0 ? line.text + line.newline : convert(line.text, step) + line.newline;
+    }).join("");
+  }
+  function toggleInline(raw, start, end, marker) {
+    start = clamp(start, raw.length);
+    end = clamp(end, raw.length);
+    const inner = raw.slice(start, end), char = marker[0];
+    let before = 0;
+    while (start - 1 - before >= 0 && raw[start - 1 - before] === char) before++;
+    let after = 0;
+    while (end + after < raw.length && raw[end + after] === char) after++;
+    const unwrap = marker === "*" ? before > 0 && after > 0 && before % 2 === 1 && after % 2 === 1 : before >= marker.length && after >= marker.length;
+    if (inner && unwrap) {
+      const cut = marker.length;
+      return { body: raw.slice(0, start - cut) + inner + raw.slice(end + cut), start: start - cut, end: end - cut };
+    }
+    if (inner.length >= marker.length * 2 && inner.startsWith(marker) && inner.endsWith(marker) && (marker !== "*" || !(inner.startsWith("**") && !inner.startsWith("***")))) {
+      return { body: raw.slice(0, start) + inner.slice(marker.length, inner.length - marker.length) + raw.slice(end), start, end: end - marker.length * 2 };
+    }
+    if (!inner) return { body: raw.slice(0, start) + marker + marker + raw.slice(end), start: start + marker.length, end: start + marker.length };
+    return { body: raw.slice(0, start) + marker + inner + marker + raw.slice(end), start: start + marker.length, end: end + marker.length };
+  }
+  function togglePrefix(raw, start, end, prefix) {
+    const { lines, targets } = lineTargets(raw, start, end);
+    if (!targets.length) throw Error("\u9009\u4E2D\u7684\u884C\u662F\u7A7A\u884C\u6216\u4EE3\u7801\uFF0C\u683C\u5F0F\u672A\u6539\u52A8\u3002");
+    const remove = targets.every((index) => lines[index].text.startsWith(prefix));
+    const steps = /* @__PURE__ */ new Map();
+    for (const index of targets) {
+      const has2 = lines[index].text.startsWith(prefix);
+      steps.set(index, remove ? -prefix.length : has2 ? 0 : prefix.length);
+    }
+    const body = rebuild(lines, steps, (text2, step) => remove ? text2.slice(prefix.length) : (step ? prefix : "") + text2);
+    return { body, start: mapPosition(lines, steps, start), end: mapPosition(lines, steps, end) };
+  }
+  function setHeading(raw, start, end, level) {
+    const { lines, targets } = lineTargets(raw, start, end);
+    if (!targets.length) throw Error("\u9009\u4E2D\u7684\u884C\u662F\u7A7A\u884C\u6216\u4EE3\u7801\uFF0C\u6807\u9898\u672A\u6539\u52A8\u3002");
+    const existing = /^ {0,3}#{1,6}[ \t]+/;
+    const same = level > 0 && targets.every((index) => new RegExp(`^ {0,3}#{${level}}[ \\t]+`).test(lines[index].text));
+    const prefix = `${"#".repeat(level)} `;
+    const next = /* @__PURE__ */ new Map(), steps = /* @__PURE__ */ new Map();
+    for (const index of targets) {
+      const text2 = lines[index].text, stripped = text2.replace(existing, "");
+      const result = same ? stripped || text2 : level > 0 ? prefix + stripped : stripped || text2;
+      next.set(index, result + lines[index].newline);
+      steps.set(index, result.length - text2.length);
+    }
+    const body = lines.map((line, index) => next.get(index) ?? line.text + line.newline).join("");
+    return { body, start: mapPosition(lines, steps, start), end: mapPosition(lines, steps, end) };
+  }
+  function markdownFormat(raw, start, end, format2) {
+    if (format2 === "bullet") return markdownBullet(raw, start, end);
+    if (format2 === "ordered") return togglePrefix(raw, start, end, "1. ");
+    if (format2 === "quote") return togglePrefix(raw, start, end, "> ");
+    if (format2 === "h0") return setHeading(raw, start, end, 0);
+    if (format2 === "h2") return setHeading(raw, start, end, 2);
+    if (format2 === "h3") return setHeading(raw, start, end, 3);
+    return toggleInline(raw, start, end, MARKERS[format2]);
+  }
+  function markdownLink(raw, start, end, url, label) {
+    start = clamp(start, raw.length);
+    end = clamp(end, raw.length);
+    const text2 = raw.slice(start, end) || label || url;
+    const snippet = `[${text2.replace(/[\\[\]]/g, "\\$&")}](${url})`;
+    if (raw.slice(start, end) === text2) return { body: raw.slice(0, start) + snippet + raw.slice(end), start: start + 1, end: start + 1 + text2.length };
+    return { body: raw.slice(0, start) + snippet + raw.slice(end), start: start + 1, end: start + 1 + text2.length };
+  }
+  function markdownUnlink(raw, start, end) {
+    start = clamp(start, raw.length);
+    end = clamp(end, raw.length);
+    const before = raw.lastIndexOf("[", start), after = raw.indexOf("]", end);
+    if (before < 0 || after < 0 || after + 1 >= raw.length || raw[after + 1] !== "(") return { body: raw, start, end };
+    const close2 = raw.indexOf(")", after);
+    if (close2 < 0) return { body: raw, start, end };
+    const text2 = raw.slice(before + 1, after);
+    return { body: raw.slice(0, before) + text2 + raw.slice(close2 + 1), start: before, end: before + text2.length };
+  }
+  function sourceFormatActive(raw, start, end) {
+    const active = {
+      strong: false,
+      em: false,
+      strike: false,
+      bullet: false,
+      ordered: false,
+      quote: false,
+      h0: false,
+      h2: false,
+      h3: false
+    };
+    start = clamp(start, raw.length);
+    end = clamp(end, raw.length);
+    for (const [format2, marker] of Object.entries(MARKERS)) {
+      const inner = raw.slice(start, end);
+      const before = raw.slice(Math.max(0, start - marker.length), start);
+      const after = raw.slice(end, end + marker.length);
+      active[format2] = Boolean(inner && before === marker && after === marker) || inner.length > marker.length * 2 && inner.startsWith(marker) && inner.endsWith(marker);
+    }
+    const at = textLines(raw).findLastIndex((line2) => line2.offset <= start);
+    const line = at >= 0 ? textLines(raw)[at].text : "";
+    active.bullet = /^ {0,3}[-*+][ \t]+/.test(line);
+    active.ordered = /^ {0,3}\d+[.)][ \t]+/.test(line);
+    active.quote = /^ {0,3}>/.test(line);
+    const heading2 = /^ {0,3}(#{1,6})[ \t]+/.exec(line);
+    active.h0 = !heading2;
+    active.h2 = heading2?.[1] === "##";
+    active.h3 = heading2?.[1] === "###";
+    return active;
+  }
+
+  // ../blog/src/scripts/writer/code-exit.ts
+  function padAfterCode() {
+    return (state, dispatch) => {
+      const { $from, $to } = state.selection;
+      if (!$from.sameParent($to)) return false;
+      const block2 = $from.parent;
+      if (block2.type !== writerSchema.nodes.code_block) return false;
+      const after = $from.after();
+      if (dispatch) {
+        const tr = state.tr.insert(after, writerSchema.nodes.paragraph.create());
+        tr.setSelection(TextSelection.create(tr.doc, after + 1));
+        dispatch(tr.scrollIntoView());
+      }
+      return true;
+    };
+  }
+  function appendParagraph() {
+    return (state, dispatch) => {
+      if (dispatch) {
+        const end = state.doc.content.size;
+        const tr = state.tr.insert(end, writerSchema.nodes.paragraph.create());
+        tr.setSelection(TextSelection.create(tr.doc, end + 1));
+        dispatch(tr.scrollIntoView());
+      }
+      return true;
+    };
+  }
+
   // ../blog/src/scripts/writer/indentation.ts
   function indentText(body, start, end, outdent = false, wholeLines = false) {
     const changes = [];
@@ -20110,17 +20274,24 @@ var WriterDesk = (() => {
     codeTools.append(bulletButton);
     modes.append(visualButton, sourceButton);
     host.append(el("p", "\u6B63\u6587", "writer-body-label"), modes, note, codeTools, toolbar, visual, source);
-    const block2 = el("select");
-    block2.className = "writer-block-type";
-    block2.setAttribute("aria-label", "\u6B63\u6587\u4E0E\u6807\u9898\u7EA7\u522B");
-    for (const [value, label] of [["0", "\u6B63\u6587"], ["2", "\u7AE0\u8282\u6807\u9898\uFF08\u8FDB\u5165\u76EE\u5F55\uFF09"], ["3", "\u5C0F\u6807\u9898\uFF08\u8FDB\u5165\u76EE\u5F55\uFF09"], ["code", "\u4EE3\u7801\u5757"]]) {
-      const option = el("option", label);
-      option.value = value;
-      block2.append(option);
+    const blockButtons = [];
+    const blockGroup = el("div", "", "writer-block-group");
+    blockGroup.setAttribute("role", "group");
+    blockGroup.setAttribute("aria-label", "\u6BB5\u843D\u683C\u5F0F");
+    for (const [level, label] of [[0, "\u6B63\u6587"], [2, "\u7AE0\u8282\u6807\u9898"], [3, "\u5C0F\u6807\u9898"]]) {
+      const control = button(label, () => {
+        if (sourceMode) {
+          editSourceFormat(level === 0 ? "h0" : level === 2 ? "h2" : "h3");
+          return;
+        }
+        run(setBlockType2(level === 0 ? writerSchema.nodes.paragraph : writerSchema.nodes.heading, level === 0 ? void 0 : { level }));
+      });
+      control.title = level === 0 ? "\u8BBE\u4E3A\u6B63\u6587\u6BB5\u843D\uFF08\u53BB\u6389\u6807\u9898\uFF09" : `\u8BBE\u4E3A${label}\uFF0C\u4F1A\u8FDB\u5165\u672C\u6587\u76EE\u5F55`;
+      control.addEventListener("mousedown", (event) => event.preventDefault());
+      blockButtons.push({ level, button: control });
+      blockGroup.append(control);
     }
-    const blockLabel = el("label", "\u6BB5\u843D\u683C\u5F0F", "writer-block-label");
-    blockLabel.append(block2);
-    toolbar.append(blockLabel);
+    toolbar.append(blockGroup);
     const controls = [];
     function run(command) {
       if (destroyed || sourceMode) return false;
@@ -20133,19 +20304,27 @@ var WriterDesk = (() => {
       view.focus();
       return applied;
     }
-    function add2(label, command, mark) {
-      const b = button(label, () => run(command));
+    function add2(label, command, mark, format2, sourceAction) {
+      const b = button(label, () => {
+        if (destroyed) return;
+        if (sourceMode) {
+          if (sourceAction) sourceAction();
+          else if (format2) editSourceFormat(format2);
+          return;
+        }
+        run(command);
+      });
       b.addEventListener("mousedown", (event) => event.preventDefault());
-      controls.push({ button: b, command, mark });
+      controls.push({ button: b, command, mark, format: format2, source: sourceAction });
       toolbar.append(b);
       return b;
     }
-    add2("\u52A0\u7C97", toggleMark(writerSchema.marks.strong), "strong");
-    add2("\u659C\u4F53", toggleMark(writerSchema.marks.em), "em");
-    add2("\u5220\u9664\u7EBF", toggleMark(writerSchema.marks.strike), "strike");
-    add2("\u65E0\u5E8F\u5217\u8868", wrapInList(writerSchema.nodes.bullet_list));
-    add2("\u6709\u5E8F\u5217\u8868", wrapInList(writerSchema.nodes.ordered_list));
-    add2("\u5F15\u7528", wrapIn(writerSchema.nodes.blockquote));
+    add2("\u52A0\u7C97", toggleMark(writerSchema.marks.strong), "strong", "strong");
+    add2("\u659C\u4F53", toggleMark(writerSchema.marks.em), "em", "em");
+    add2("\u5220\u9664\u7EBF", toggleMark(writerSchema.marks.strike), "strike", "strike");
+    add2("\u65E0\u5E8F\u5217\u8868", wrapInList(writerSchema.nodes.bullet_list), void 0, "bullet");
+    add2("\u6709\u5E8F\u5217\u8868", wrapInList(writerSchema.nodes.ordered_list), void 0, "ordered");
+    add2("\u5F15\u7528", wrapIn(writerSchema.nodes.blockquote), void 0, "quote");
     const linkForm = el("form", "", "writer-link-form"), href = field("\u94FE\u63A5\u5730\u5740\uFF08https://\u2026\uFF09", "url"), text2 = field("\u663E\u793A\u6587\u5B57\uFF08\u672A\u9009\u4E2D\u6587\u5B57\u65F6\u586B\u5199\uFF09");
     linkForm.hidden = true;
     const linkButton = button("\u94FE\u63A5", () => {
@@ -20168,6 +20347,17 @@ var WriterDesk = (() => {
         options.onError(Error("\u8BF7\u8F93\u5165 HTTP\u3001HTTPS \u6216\u90AE\u4EF6\u94FE\u63A5\u3002"));
         return;
       }
+      if (sourceMode) {
+        try {
+          applySourceEdit(markdownLink(source.value, source.selectionStart, source.selectionEnd, url, text2.input.value.trim() || void 0));
+        } catch (error2) {
+          options.onError(error2 instanceof Error ? error2 : Error(String(error2)));
+        }
+        linkForm.hidden = true;
+        href.input.value = "";
+        text2.input.value = "";
+        return;
+      }
       run((state, dispatch) => {
         const { from: from2, to, empty: empty2 } = state.selection, mark = writerSchema.marks.link.create({ href: url });
         let tr = state.tr;
@@ -20183,10 +20373,20 @@ var WriterDesk = (() => {
     add2("\u79FB\u9664\u94FE\u63A5", (state, dispatch) => {
       dispatch?.(state.tr.removeMark(state.selection.from, state.selection.to, writerSchema.marks.link));
       return !state.selection.empty;
+    }, void 0, void 0, () => {
+      try {
+        applySourceEdit(markdownUnlink(source.value, source.selectionStart, source.selectionEnd));
+      } catch (error2) {
+        options.onError(error2 instanceof Error ? error2 : Error(String(error2)));
+      }
     });
-    add2("\u64A4\u9500", undo);
-    add2("\u91CD\u505A", redo);
-    block2.addEventListener("change", () => run(block2.value === "code" ? codeBlockCommand(language.value) : setBlockType2(block2.value === "0" ? writerSchema.nodes.paragraph : writerSchema.nodes.heading, block2.value === "0" ? void 0 : { level: Number(block2.value) })));
+    const sourceHistory = (action) => () => {
+      if (source.selectionStart === source.selectionEnd && !source.value) return;
+      source.focus();
+      document.execCommand(action);
+    };
+    add2("\u64A4\u9500", undo, void 0, void 0, sourceHistory("undo"));
+    add2("\u91CD\u505A", redo, void 0, void 0, sourceHistory("redo"));
     language.addEventListener("change", () => {
       preferredLanguage = language.value;
       if (sourceMode) editSourceCode("language");
@@ -20244,6 +20444,17 @@ var WriterDesk = (() => {
         options.onError(error2 instanceof Error ? error2 : Error(String(error2)));
       }
     }
+    function editSourceFormat(format2) {
+      if (sourceComposing) {
+        options.onError(Error("\u8BF7\u5148\u5B8C\u6210\u5F53\u524D\u6587\u5B57\u8F93\u5165\uFF0C\u518D\u8BBE\u7F6E\u683C\u5F0F\u3002"));
+        return;
+      }
+      try {
+        applySourceEdit(markdownFormat(source.value, source.selectionStart, source.selectionEnd, format2));
+      } catch (error2) {
+        options.onError(error2 instanceof Error ? error2 : Error(String(error2)));
+      }
+    }
     function editSourceCode(action) {
       if (sourceComposing) {
         options.onError(Error("\u8BF7\u5148\u5B8C\u6210\u5F53\u524D\u6587\u5B57\u8F93\u5165\uFF0C\u518D\u8BBE\u7F6E\u4EE3\u7801\u683C\u5F0F\u3002"));
@@ -20256,6 +20467,10 @@ var WriterDesk = (() => {
         options.onError(error2 instanceof Error ? error2 : Error(String(error2)));
       }
     }
+    const padAfter = (editor) => {
+      const command = appendParagraph();
+      return command(editor.state, editor.dispatch, editor);
+    };
     const plugins = () => [history(), keymap({
       "Mod-z": undo,
       "Mod-y": redo,
@@ -20263,7 +20478,10 @@ var WriterDesk = (() => {
       "Mod-b": toggleMark(writerSchema.marks.strong),
       "Mod-i": toggleMark(writerSchema.marks.em),
       "Mod-Shift-x": toggleMark(writerSchema.marks.strike),
+      // Enter 只做列表续行：代码块里 Enter 就是老实换行（站主 2026-11-16 的要求）。
       Enter: splitListItem(writerSchema.nodes.list_item),
+      // 跳出代码块只认这个组合键，光标在哪种块里、哪一行都能用。
+      "Mod-Enter": (state, dispatch) => padAfterCode()(state, dispatch) || padAfter(view),
       "Mod-[": liftListItem(writerSchema.nodes.list_item),
       "Mod-]": sinkListItem(writerSchema.nodes.list_item),
       Tab: tabIndentCommand(),
@@ -20329,25 +20547,35 @@ var WriterDesk = (() => {
         if (images.length) options.onImageFiles(images);
         return true;
       },
-      handleClick(_editor, _pos, event) {
+      handleClick(editor, pos, event) {
         if (event.target.closest("a")) {
           event.preventDefault();
           return true;
         }
+        const last = editor.state.doc.lastChild;
+        if (pos >= editor.state.doc.content.size && last && (last.type === writerSchema.nodes.code_block || last.type === writerSchema.nodes.raw_block)) return padAfter(editor);
         return false;
       }
     });
     function updateControls() {
       const state = view.state, { $from, $to } = state.selection;
       const inCode = $from.sameParent($to) && $from.parent.type === writerSchema.nodes.code_block;
-      block2.value = inCode ? "code" : $from.parent === $to.parent && $from.parent.type === writerSchema.nodes.heading ? String($from.parent.attrs.level) : "0";
+      const level = $from.parent === $to.parent && $from.parent.type === writerSchema.nodes.heading ? Number($from.parent.attrs.level) : 0;
+      const marks = sourceMode ? sourceFormatActive(source.value, source.selectionStart, source.selectionEnd) : null;
+      for (const entry of blockButtons) entry.button.setAttribute("aria-pressed", String(sourceMode ? marks?.[entry.level === 0 ? "h0" : entry.level === 2 ? "h2" : "h3"] ?? false : level === entry.level));
       codeButton.disabled = !sourceMode && !codeBlockCommand(preferredLanguage)(state);
       codeButton.setAttribute("aria-pressed", String(!sourceMode && inCode));
       const current = inCode ? String($from.parent.attrs.params ?? "").split(/\s/)[0] || "text" : preferredLanguage;
       if (!sourceMode) showLanguage(current);
       for (const control of controls) {
-        control.button.disabled = !control.command(state);
-        if (control.mark) control.button.setAttribute("aria-pressed", String(state.selection.empty ? !!writerSchema.marks[control.mark].isInSet(state.storedMarks ?? $from.marks()) : state.doc.rangeHasMark(state.selection.from, state.selection.to, writerSchema.marks[control.mark])));
+        if (sourceMode) {
+          const usable = !!(control.format || control.source);
+          control.button.disabled = !usable;
+          control.button.setAttribute("aria-pressed", String(!!control.format && !!marks?.[control.format]));
+        } else {
+          control.button.disabled = !control.command(state);
+          if (control.mark) control.button.setAttribute("aria-pressed", String(state.selection.empty ? !!writerSchema.marks[control.mark].isInSet(state.storedMarks ?? $from.marks()) : state.doc.rangeHasMark(state.selection.from, state.selection.to, writerSchema.marks[control.mark])));
+        }
       }
       updateSourceControls();
     }
@@ -20355,8 +20583,8 @@ var WriterDesk = (() => {
       const issue = visualMarkdownIssue(raw);
       source.hidden = !sourceMode;
       visual.hidden = sourceMode;
-      toolbar.hidden = sourceMode;
       linkForm.hidden = true;
+      toolbar.hidden = false;
       sourceParagraph.hidden = !sourceMode;
       updateSourceControls();
       visualButton.disabled = !!issue;
@@ -20437,15 +20665,15 @@ ${line}
         });
       },
       /** 通用插入：`block` 为真时把 Markdown 片段解析成块、插到当前段落之后；带原始 HTML 的附件行强制走源码。 */
-      insertText(markdown2, block3 = false) {
-        if (sourceMode || block3 && markdown2.includes("<")) {
+      insertText(markdown2, block2 = false) {
+        if (sourceMode || block2 && markdown2.includes("<")) {
           if (!sourceMode) switchMode(true);
           const start = source.selectionStart ?? raw.length, end = source.selectionEnd ?? start;
           source.setRangeText(markdown2, start, end, "end");
           source.dispatchEvent(new Event("input", { bubbles: true }));
           return true;
         }
-        if (!block3) return run((state, dispatch) => {
+        if (!block2) return run((state, dispatch) => {
           dispatch?.(state.tr.insertText(markdown2).scrollIntoView());
           return true;
         });
