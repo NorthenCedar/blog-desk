@@ -19471,12 +19471,22 @@ var WriterDesk = (() => {
       const next = i2 + 1 < ranges.length ? ranges[i2 + 1][0] : lines.length;
       blocks.push({
         text: markdown2.slice(offsetOf(start), offsetOf(end)),
-        gap: markdown2.slice(offsetOf(end), offsetOf(next))
+        gap: markdown2.slice(offsetOf(end), offsetOf(next)),
+        // 正文开头的空行（写作台从 frontmatter 切出来的正文常常以空行起头）也得留住，
+        // 否则改一个字就把开头那行空行吃掉。
+        lead: i2 === 0 ? markdown2.slice(0, offsetOf(start)) : void 0
       });
     }
     return blocks;
   }
   var cheapEqual = (a, b) => a.type === b.type && a.nodeSize === b.nodeSize && a.eq(b);
+  function sourceEol(blocks) {
+    return blocks.some((block2) => block2.text.includes("\r\n")) ? "\r\n" : "\n";
+  }
+  function matchEol(text2, eol) {
+    if (eol === "\n") return text2;
+    return text2.replace(/\r\n/g, "\n").split("\n").join(eol);
+  }
   function alignBlocks(current, original) {
     const rows = current.length, cols = original.length;
     const table2 = Array.from({ length: rows + 1 }, () => new Uint16Array(cols + 1));
@@ -19499,7 +19509,8 @@ var WriterDesk = (() => {
   function mergeVerbatim(current, original, blocks, serializeBlock) {
     if (current.length === 0) return "";
     const matched = alignBlocks(current, original);
-    let out = "";
+    const eol = sourceEol(blocks);
+    let out = blocks[0]?.lead ?? "";
     let pendingGap = "";
     for (let i2 = 0; i2 < current.length; i2++) {
       const index = matched[i2];
@@ -19508,8 +19519,8 @@ var WriterDesk = (() => {
         out += blocks[index].text;
         pendingGap = blocks[index].gap;
       } else {
-        out += serializeBlock(current[i2]);
-        pendingGap = "\n\n";
+        out += matchEol(serializeBlock(current[i2]), eol);
+        pendingGap = eol + eol;
       }
     }
     const last = matched[current.length - 1];
@@ -19522,6 +19533,18 @@ var WriterDesk = (() => {
     nodes: schema.spec.nodes.update("image", {
       ...schema.spec.nodes.get("image"),
       toDOM: (node) => ["span", { "data-writer-image": "" }, `[\u914D\u56FE\uFF1A${node.attrs.alt ?? ""}]`]
+    }).addToEnd("raw_block", {
+      // ★ 为什么有这一块（2026-11-16）：站主有好几篇笔记带原生表格或 <video> 标签，
+      //   以前整篇被判进源码模式——「只打正文」在它们身上直接失效。表格和原始 HTML
+      //   又没法无损往返成 ProseMirror 节点，所以改成「整块原样冻结」：节点里存原文，
+      //   序列化时原字节吐回（配合 verbatim 的块级比对，没碰过就一个字节都不变），
+      //   在编辑器里显示成只读小块，前后正文照常可视化编辑。
+      group: "block",
+      atom: true,
+      selectable: true,
+      attrs: { text: { default: "" }, kind: { default: "html" } },
+      toDOM: (node) => ["div", { "data-writer-raw": node.attrs.kind }, node.attrs.text],
+      parseDOM: []
     }),
     marks: schema.spec.marks.update("link", {
       ...schema.spec.marks.get("link"),
@@ -19631,15 +19654,69 @@ var WriterDesk = (() => {
     paragraph: preserveIndent("paragraph"),
     heading: preserveIndent("heading"),
     // 站主的笔记一律用「- 」起头，不让序列化器改写成「* 」。
-    bullet_list: (state, node) => state.renderList(node, "  ", () => "- ")
+    bullet_list: (state, node) => state.renderList(node, "  ", () => "- "),
+    // 冻结块原字节吐回：配合 verbatim 的块级比对，没碰过就是一个字节都不变。
+    raw_block: (state, node) => {
+      state.write(node.attrs.text);
+      state.closeBlock(node);
+    }
   }, {
     ...defaultMarkdownSerializer.marks,
     strike: { open: "<del>", close: "</del>", expelEnclosingWhitespace: true }
   }, { escapeExtraCharacters: /</g });
   var detector = withWriterStrike(new lib_default({ html: true }));
+  var FROZEN_MARK = "WRITERRAW";
+  var FROZEN_TOKEN = new RegExp(`^${FROZEN_MARK}(\\d+)\\u0001$`);
+  function writerFrozenBlocks(raw) {
+    const lines = raw.split("\n");
+    const offsets = [0];
+    for (let i2 = 1; i2 < lines.length; i2++) offsets.push(offsets[i2 - 1] + lines[i2 - 1].length + 1);
+    const at = (line) => line >= lines.length ? raw.length : offsets[line] ?? raw.length;
+    const blocks = [];
+    for (const token of detector.parse(raw, {})) {
+      if (token.level !== 0 || !token.map) continue;
+      const kind = token.type === "table_open" ? "table" : token.type === "html_block" ? "html" : null;
+      if (!kind) continue;
+      const [start, end] = token.map;
+      blocks.push({ start, end, kind, text: raw.slice(at(start), at(end)) });
+    }
+    return blocks;
+  }
+  function maskFrozen(raw, blocks) {
+    const lines = raw.split("\n");
+    const out = [];
+    let line = 0;
+    blocks.forEach((block2, index) => {
+      out.push(...lines.slice(line, block2.start), `${FROZEN_MARK}${index}`, "");
+      line = block2.end;
+    });
+    out.push(...lines.slice(line));
+    return out.join("\n");
+  }
+  function restoreFrozen(doc3, blocks) {
+    const children = [];
+    let restored = 0;
+    doc3.forEach((node) => {
+      const match2 = node.type === writerSchema.nodes.paragraph && node.childCount === 1 ? FROZEN_TOKEN.exec(node.textContent) : null;
+      const block2 = match2 ? blocks[Number(match2[1])] : void 0;
+      if (block2) {
+        children.push(writerSchema.nodes.raw_block.create({ text: block2.text, kind: block2.kind }));
+        restored++;
+        return;
+      }
+      children.push(node);
+    });
+    return { doc: doc3.type.create(doc3.attrs, children, doc3.marks), restored };
+  }
+  function parseBody(raw) {
+    const frozen = writerFrozenBlocks(raw);
+    if (!frozen.length) return { doc: parser.parse(raw), frozen, ok: true };
+    const { doc: doc3, restored } = restoreFrozen(parser.parse(maskFrozen(raw, frozen)), frozen);
+    return { doc: frozen.length ? doc3 : parser.parse(raw), frozen, ok: restored === frozen.length };
+  }
   var blockCache = /* @__PURE__ */ new WeakMap();
   var parseWriterMarkdown = (raw) => {
-    const doc3 = parser.parse(raw);
+    const { doc: doc3 } = parseBody(raw);
     blockCache.set(doc3, { raw, blocks: splitTopLevelBlocks(raw, detector) });
     return doc3;
   };
@@ -19653,7 +19730,13 @@ var WriterDesk = (() => {
     return serializer.serialize(doc3);
   }
   function visualMarkdownIssue(raw) {
-    const env = {}, tokens = detector.parse(raw, env);
+    let source = raw;
+    const frozen = writerFrozenBlocks(raw);
+    if (frozen.length) {
+      if (!parseBody(raw).ok) return frozen[0].kind === "table" ? "\u8868\u683C" : "HTML\u3001\u89C6\u9891\u6216\u7EC4\u4EF6";
+      source = maskFrozen(raw, frozen);
+    }
+    const env = {}, tokens = detector.parse(source, env);
     if (env.references) return "\u5F15\u7528\u5F0F\u94FE\u63A5\u6216\u56FE\u7247";
     const visit = (items) => {
       for (const token of items) {
@@ -19930,6 +20013,58 @@ var WriterDesk = (() => {
   }
 
   // ../blog/src/scripts/writer/body-editor.ts
+  function tablePreview(text2) {
+    const table2 = el("table", "", "writer-raw-table");
+    const split2 = (line) => {
+      const body2 = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+      const cells = [];
+      let cell = "";
+      for (let i2 = 0; i2 < body2.length; i2++) {
+        const char = body2[i2];
+        if (char === "\\" && body2[i2 + 1] === "|") {
+          cell += "|";
+          i2++;
+          continue;
+        }
+        if (char === "|") {
+          cells.push(cell);
+          cell = "";
+          continue;
+        }
+        cell += char;
+      }
+      cells.push(cell);
+      return cells.map((value) => value.trim());
+    };
+    const plain = (value) => value.replace(/`([^`]*)`/g, "$1").replace(/\*\*([^*]+)\*\*/g, "$1").replace(/__([^_]+)__/g, "$1");
+    const rows = text2.split(/\r?\n/).filter((line) => line.trim() !== "");
+    const align = /^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?$/;
+    const head = split2(rows[0] ?? "");
+    const body = align.test(rows[1] ?? "") ? rows.slice(2) : rows.slice(1);
+    const headRow = el("tr");
+    for (const value of head) {
+      const th = el("th");
+      th.textContent = plain(value);
+      th.title = value;
+      headRow.append(th);
+    }
+    const thead = el("thead");
+    thead.append(headRow);
+    table2.append(thead);
+    const tbody = el("tbody");
+    for (const line of body) {
+      const tr = el("tr");
+      for (const value of split2(line)) {
+        const td = el("td");
+        td.textContent = plain(value);
+        td.title = value;
+        tr.append(td);
+      }
+      tbody.append(tr);
+    }
+    table2.append(tbody);
+    return table2;
+  }
   function mountWriterBody(host, initial, options) {
     let raw = initial, sourceMode = !!visualMarkdownIssue(initial), destroyed = false;
     let original = { raw: initial, doc: parseWriterMarkdown(initial) };
@@ -20158,6 +20293,18 @@ var WriterDesk = (() => {
           dom.append(image2);
         } else dom.textContent = `[\u914D\u56FE\uFF1A${node.attrs.alt || "\u5F85\u83B7\u53D6"}]`;
         return { dom };
+      }, raw_block(node) {
+        const dom = el("div", "", "writer-raw-block");
+        dom.contentEditable = "false";
+        dom.dataset.kind = node.attrs.kind;
+        dom.append(el("span", node.attrs.kind === "table" ? "\u8868\u683C \xB7 \u53EA\u8BFB\uFF08\u539F\u6587\u5B8C\u6574\u4FDD\u7559\uFF09" : "\u89C6\u9891 / HTML \xB7 \u53EA\u8BFB\uFF08\u539F\u6587\u5B8C\u6574\u4FDD\u7559\uFF09", "writer-raw-label"));
+        if (node.attrs.kind === "table") dom.append(tablePreview(node.attrs.text));
+        else {
+          const pre = el("pre", "", "writer-raw-source");
+          pre.textContent = node.attrs.text;
+          dom.append(pre);
+        }
+        return { dom };
       } },
       handlePaste(editor, event) {
         const images = Array.from(event.clipboardData?.files ?? []).filter((f) => f.type.startsWith("image/"));
@@ -20215,7 +20362,12 @@ var WriterDesk = (() => {
       visualButton.disabled = !!issue;
       visualButton.setAttribute("aria-pressed", String(!sourceMode));
       sourceButton.setAttribute("aria-pressed", String(sourceMode));
-      note.textContent = (issue ? `\u6B63\u6587\u5305\u542B${issue}\uFF0C\u8BF7\u5728\u6E90\u7801\u6A21\u5F0F\u7F16\u8F91\uFF1B\u539F\u59CB\u5185\u5BB9\u4F1A\u5B8C\u6574\u4FDD\u7559\u3002` : "\u9009\u4E2D\u6B63\u6587\u540E\u8BBE\u7F6E\u683C\u5F0F\u3002\u4EE3\u7801\u5757\u53EF\u76F4\u63A5\u8F93\u5165\u6216\u7C98\u8D34\u4EE3\u7801\uFF0CCtrl / \u2318 + Enter \u7EE7\u7EED\u6B63\u6587\uFF1B\u7AE0\u8282\u6807\u9898\u548C\u5C0F\u6807\u9898\u4F1A\u8FDB\u5165\u672C\u6587\u76EE\u5F55\u3002") + " Tab \u7F29\u8FDB\u56DB\u4E2A\u7A7A\u683C\uFF0CShift+Tab \u51CF\u5C11\u7F29\u8FDB\u3002";
+      let frozen = 0;
+      view.state.doc.descendants((node) => {
+        if (node.type === writerSchema.nodes.raw_block) frozen++;
+      });
+      const hint = frozen ? "\u8868\u683C\u4E0E\u89C6\u9891\u4EE5\u53EA\u8BFB\u5C0F\u5757\u4FDD\u7559\uFF08\u539F\u6587\u4E00\u4E2A\u5B57\u8282\u90FD\u4E0D\u4F1A\u6539\uFF09\uFF0C\u8981\u6539\u5B83\u4EEC\u8BF7\u5207\u5230\u6E90\u7801\u6A21\u5F0F\u3002" : "";
+      note.textContent = (issue ? `\u6B63\u6587\u5305\u542B${issue}\uFF0C\u8BF7\u5728\u6E90\u7801\u6A21\u5F0F\u7F16\u8F91\uFF1B\u539F\u59CB\u5185\u5BB9\u4F1A\u5B8C\u6574\u4FDD\u7559\u3002` : hint + "\u9009\u4E2D\u6B63\u6587\u540E\u8BBE\u7F6E\u683C\u5F0F\u3002\u4EE3\u7801\u5757\u53EF\u76F4\u63A5\u8F93\u5165\u6216\u7C98\u8D34\u4EE3\u7801\uFF0CCtrl / \u2318 + Enter \u7EE7\u7EED\u6B63\u6587\uFF1B\u7AE0\u8282\u6807\u9898\u548C\u5C0F\u6807\u9898\u4F1A\u8FDB\u5165\u672C\u6587\u76EE\u5F55\u3002") + " Tab \u7F29\u8FDB\u56DB\u4E2A\u7A7A\u683C\uFF0CShift+Tab \u51CF\u5C11\u7F29\u8FDB\u3002";
     }
     function switchMode(next) {
       if (next === sourceMode) return;
