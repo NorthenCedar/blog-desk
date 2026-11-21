@@ -19379,6 +19379,23 @@ var WriterDesk = (() => {
     }
   };
 
+  // ../blog/src/lib/content-urls.mjs
+  var CONTENT_BASE = "https://content.invalid/";
+  function parseUrl(value, base3) {
+    if (typeof value !== "string" || /[\\\u0000-\u001f\u007f]/.test(value)) return null;
+    try {
+      const url = new URL(value, base3);
+      return url.username || url.password ? null : url;
+    } catch {
+      return null;
+    }
+  }
+  var isWeb = (protocol) => protocol === "https:" || protocol === "http:";
+  function contentLinkUrl(value, base3 = CONTENT_BASE) {
+    const url = parseUrl(value, base3);
+    return url && (isWeb(url.protocol) || url.protocol === "mailto:") ? url : null;
+  }
+
   // ../blog/src/lib/strike-markdown.ts
   function withWriterStrike(markdown2) {
     markdown2.inline.ruler.before("html_inline", "writer_strike", (state, silent) => {
@@ -19415,12 +19432,7 @@ var WriterDesk = (() => {
   // ../blog/src/scripts/writer/preview.ts
   var inlineMarkdown = preserveCodeSpaces(withWriterStrike(new lib_default({ html: false, linkify: false })));
   function safeWriterLink(value, origin) {
-    try {
-      const url = new URL(value, origin);
-      return ["http:", "https:", "mailto:"].includes(url.protocol) ? url.href : null;
-    } catch {
-      return null;
-    }
+    return contentLinkUrl(value, origin)?.href ?? null;
   }
   function safeWriterImage(value, origin) {
     try {
@@ -19514,7 +19526,10 @@ var WriterDesk = (() => {
     let pendingGap = "";
     for (let i2 = 0; i2 < current.length; i2++) {
       const index = matched[i2];
-      if (i2 > 0) out += pendingGap;
+      if (i2 > 0) {
+        out += pendingGap;
+        if (out && !out.endsWith("\n")) out += eol + eol;
+      }
       if (index >= 0) {
         out += blocks[index].text;
         pendingGap = blocks[index].gap;

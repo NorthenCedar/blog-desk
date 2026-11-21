@@ -17,3 +17,6 @@
 
 # 生成器的**输入**是 UTF-8 源码，明确按 UTF-8 存，别被当成 GBK。
 说明.source.txt text
+
+# 生成的正文编辑器按字节校验，Windows 检出时也保持 LF。
+ui/vendor/writer-body.js text eol=lf

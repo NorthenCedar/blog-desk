@@ -1,18 +1,16 @@
 # 写作台（WriteDesk）
 
-「北杉札记」博客的本地编辑器。文章、标签、图片、相册都在界面里改，
-改完点「发布」= 构建 + 提交 + 推送。推到 `main` 就等于上线 ——
-Cloudflare Pages 会在 1–3 分钟内自动部署。
+写作台是「北杉札记」的 Windows 桌面编辑器。可视化界面和 Markdown 源码读写同一份文件，
+支持文章、说说、相册和造物台。保存先写入本地，发布页再构建、提交和推送博客。Cloudflare Pages 部署成功后，线上才会更新。
 
-配套站点源码在同一个站主的另一个仓库（personal），两边通过 `content/` 目录的
-Markdown 文件对接。
+[访问北杉札记](https://northcedar.top) · [博客源码](https://github.com/NorthenCedar/personal)
 
 ```
 北杉札记（Astro 站点）        写作台（本仓库）
-  content/posts/*.md   ←──────   读写同一批文件
+  content/posts/<slug>/index.md ←── 读写同一批文件
   content/pages/*.md   ←──────
   public/ 下静态资源           上传/转存图片
-  git main                ←──────   推送即部署
+  git main                      ←── 推送触发部署
 ```
 
 ## 它能做什么
@@ -40,16 +38,17 @@ Markdown 文件对接。
 「保存」只更新本地文件；「保存并去发布」会打开原有发布流程，仍需明确点击发布。
 文件被其他窗口或 AI 更新时会提示冲突，保留当前输入；请先复制内容，再重新读取合并。
 
-### 视频与 AI 并行编辑
+### 正文、媒体与同步
 
 文章正文上方增加「正文／章节标题／小标题」按钮，作用于光标所在段落或选中的行。
 章节标题保存为 H2，小标题保存为 H3，发布后自动生成文章的「本文目录」。
 桌面目录在正文右侧，手机在正文前；单纯加粗不会进入目录。代码围栏与缩进代码保持原样。
 安装版需要重新构建更新，重开旧版 exe 不会自动读取源码中的界面改动。
 
-正文工具栏的「代码块」会把选中的行合成一个代码块，保留代码的缩进与空行；
-没有选中内容时插入空块，光标停在块内。语言默认 Python，可选择 JavaScript、TypeScript、
-JSON、Bash 或纯文本。在已有代码块内再次点击不会重复包裹；把光标放入块内后选择语言，
+正文工具栏的「代码块」会把选中的文字合成一个代码块，保留缩进与空行。
+没有选中内容时插入空块，光标停在块内。可以选择 C、C++、Python 等语言，`Ctrl+Enter` 回到普通正文。
+切换到 Markdown 源码后，开围栏（如 `` ```c ``）和收围栏各占一行。即使源码原来末尾没有换行，前一段正文和后面的标题也会和围栏分开。
+在已有代码块内再次点击不会重复包裹；把光标放入块内后选择语言，
 只修改该块的语言，已有围栏和附加信息保留。点击「正文」可去掉当前块的围栏，恢复普通段落。
 格式操作支持 `Ctrl+Z` 撤销、`Ctrl+Y` 重做，也保留此前输入的撤销记录；输入法组词期间请先完成组词。
 文章、说说及项目正文支持 `Tab` 插入四个空格；选中多行时逐行缩进，`Shift+Tab` 移除每行开头最多四个空格。
@@ -83,19 +82,20 @@ MP4 推荐 H.264 + AAC。填写说明后保存，再去发布。原件存入博�
 内容保存采用版本比对和同目录原子替换，临近替换时再次检查；这是乐观并发保护，
 不等于任意外部编辑器都遵守的跨进程锁。同一篇内容请避免两个工具同时保存，发生冲突先复制草稿再合并。
 
-需要 **Windows** 与 **Python 3.10+**（含 `pywebview` 与 `pythonnet`，
-两者都是纯 pip 包，不需要 Node、不需要系统级安装器）。
+### 从源码运行
+
+需要 Windows、WebView2 和 **Python 3.10+**。本地打开编辑器使用 Python 环境，发布时还需博客仓库指定的 Node.js 环境。
 依赖清单见 `requirements.txt`；2026-11-04 在 Python **3.14.7** 上用那组版本
 跑通了构建、窗口启动与 PyInstaller 打包。
 
-```bash
-git clone <this-repo> blog-desk
+```powershell
+git clone https://github.com/NorthenCedar/blog-desk.git
 cd blog-desk
 
 # 建议装进虚拟环境，但**不要建在本仓库里**（原因见下）
 python -m venv "$env:LOCALAPPDATA\Programs\写作台-build-venv"
 & "$env:LOCALAPPDATA\Programs\写作台-build-venv\Scripts\Activate.ps1"
-pip install -r requirements.txt      # pywebview / pythonnet / Pillow / PyYAML，版本已钉住
+python -m pip install -r requirements.txt
 
 # ★★ venv **不要建在本仓库里**（2026-10-15 实测，见 build-app.py 的 preflight）：
 #   本仓库所在的 D:\ 整棵树挂着 `Mandatory Label\Low Mandatory Level` 低完整性标签，
@@ -109,7 +109,7 @@ pip install -r requirements.txt      # pywebview / pythonnet / Pillow / PyYAML�
 #   从源码里扫出依赖并逐个 import，缺了就直接停下 —— 但第一次装还是按上面那行装全。
 
 # 复制配置模板
-copy config.example.json config.json
+Copy-Item config.example.json config.json
 ```
 
 然后**双击 `写作台.bat`**（无控制台窗口），或在设置界面里填两项：
@@ -121,14 +121,14 @@ copy config.example.json config.json
 
 也可以命令行覆盖仓库路径：
 
-```bash
+```powershell
 python app.py --repo "D:\path\to\your\blog-repo"
 ```
 
 ## 配置
 
-配置文件是 `config.json`（放在程序目录旁边，不在源码目录）。仓库里只提供
-`config.example.json` 模板。
+配置文件 `config.json` 放在安装版的 exe 同目录。直接运行源码时，从源码目录读配置。
+仓库提供 `config.example.json` 模板。
 
 | 键 | 默认 | 说明 |
 |---|---|---|
@@ -146,8 +146,7 @@ python app.py --repo "D:\path\to\your\blog-repo"
 **密钥只落本机磁盘，不回传给页面。** 界面只知道「配没配」（`has_token`），
 不知道值 —— `lib/config.py` 的 `public_config()` 负责把它从返回结构里摘掉。
 
-`.gitignore` 已经把 `config.json` 挡在版本库之外。如果你是在别处 clone 的
-这份代码，**第一步永远是先 `copy config.example.json config.json`**。
+`.gitignore` 将 `config.json` 排除在版本库之外。首次使用时可从设置页填写配置，或者复制 `config.example.json` 为 `config.json`。
 
 ## 写作界面
 
@@ -155,14 +154,14 @@ python app.py --repo "D:\path\to\your\blog-repo"
 
 ## 打包成 exe（可选）
 
-```bash
-pip install pyinstaller==6.22.3     # 实测过的版本（6.22.x 起支持 Python 3.14）
+```powershell
+python -m pip install pyinstaller==6.22.3
 python build-app.py
 ```
 
-产物装到 `%LOCALAPPDATA%\Programs\写作台\`，会**自动跑一次真实的服务自检**
-（起服务、打 `/api/health`、拿到 200 才算过）。没过的会直说"打出来了但起不来"，
-并返回非 0 —— "文件在"和"起得来"是两件事。
+产物装到 `%LOCALAPPDATA%\Programs\写作台\`，先启动新版本完成服务自检，成功后切换安装并刷新桌面、开始菜单的快捷方式。程序会保留原设置。
+更新正在运行的桌面版前，先保存正文并退出写作台。
+`build-app.py` 通过 `/api/health` 检查新版本，安装失败时会给出原因和退出码。
 
 ### 升级是"装到新目录 → 自检 → 切换"，不是覆盖
 
@@ -190,6 +189,17 @@ cp313 二进制 0 个。安装目录与构建产物**逐文件一一对应**，�
 "没有应用"的状态。
 
 `config.json` 与运行日志会从旧安装带过来（新建目录天生没有它们）。
+
+### 重建可视化正文
+
+可视化编辑器与博客共用源码，Markdown 块间合并实现在博客仓库的 `src/scripts/writer/verbatim.ts`。
+本仓库带有构建后的 `ui/vendor/writer-body.js`，直接打包桌面应用时可以使用它。维护共用编辑器时，先在博客仓库安装依赖、同步共享源码，再从本仓库运行以下命令。博客仓库位于其他目录时，把 `Resolve-Path` 的参数换成对应位置。
+
+```powershell
+$env:BLOG_REPO = (Resolve-Path '..\blog').Path
+node _tools/bundle-writer.mjs
+node --test _test_code_block.cjs
+```
 
 ## 造物台
 

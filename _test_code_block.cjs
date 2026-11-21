@@ -40,6 +40,37 @@ test('EOF 与末尾空行均能插入，继承当前文档的 CRLF',()=>{
   assert.equal(format('正文',2,2).body,'正文\n```python\n\n```');
   assert.equal(format('正文\r\n',4,4,'code','json').body,'正文\r\n```json\r\n\r\n```');
 });
+
+const visual = vm.createContext({});
+const bundle = readFileSync(join(__dirname, 'ui/vendor/writer-body.js'), 'utf8');
+vm.runInContext(bundle + '\nthis.editor = WriterDesk;', visual);
+const { parseWriterMarkdown, serializeWriterMarkdown } = visual.editor;
+
+function appendVisualBlocks(originalText, addedMarkdown) {
+  const original = parseWriterMarkdown(originalText);
+  const added = parseWriterMarkdown(addedMarkdown);
+  const doc = original.type.create(null, original.content.append(added.content));
+  return { doc, markdown: serializeWriterMarkdown(doc, { raw: originalText, doc: original }) };
+}
+
+for (const [label, eol] of [['LF', '\n'], ['CRLF', '\r\n']]) {
+  test(`可视化在无末尾换行的正文后插入 C 代码块，开围栏独立一行（${label}）`, () => {
+    const original = ['### 结构', '', '上一行'].join(eol);
+    const code = ['```c', '    int n = 1;', '```'].join(eol);
+    const result = appendVisualBlocks(original, code);
+    assert.equal(result.markdown, original + eol + eol + code);
+    assert.ok(parseWriterMarkdown(result.markdown).eq(result.doc));
+  });
+
+  test(`可视化退出末尾代码块后接小标题，收围栏独立一行（${label}）`, () => {
+    const original = ['```c', '    return leap;', '```'].join(eol);
+    const following = ['### 输入结构', '', '- 逐项输入'].join(eol);
+    const result = appendVisualBlocks(original, following);
+    assert.equal(result.markdown, original + eol + eol + following);
+    assert.ok(parseWriterMarkdown(result.markdown).eq(result.doc));
+  });
+}
+
 test('已有长反引号与波浪围栏不嵌套，点击不会重写语言或缩进',()=>{
   for(const body of ['````js\nconst s = "```";\n````','~~~python\n    print(1)\n~~~~~','  ```rust\n  fn main() {}\n  ```']) {
     for(const [s,e] of [[body.indexOf('\n')+1,body.indexOf('\n')+1],[0,body.length]]) {

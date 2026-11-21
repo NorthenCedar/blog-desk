@@ -8,18 +8,19 @@
  * ui/vendor/writer-body.js，并写一份 ui/vendor/manifest.json（把 sha256 钉住，
  * 手改产物会被 _test_writer_bundle.py 抓到）。
  *
- * 用法（在 D:\router\blog-desk 下）：
+ * 用法（在写作台仓库根目录下）：
  *   node _tools/bundle-writer.mjs
  * 博客仓库改了 src/scripts/writer/* 之后要重跑一次，再重打包应用。
  */
 import { createHash } from 'node:crypto';
-import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
-const here = dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
+const here = dirname(fileURLToPath(import.meta.url));
 const deskRoot = resolve(here, '..');
-const blogRoot = process.env.BLOG_REPO || 'D:\\router\\blog';
+const blogRoot = resolve(process.env.BLOG_REPO || join(deskRoot, '..', 'blog'));
 const requireFromBlog = createRequire(join(blogRoot, 'package.json'));
 const esbuild = requireFromBlog('esbuild');
 
@@ -40,12 +41,12 @@ const result = await esbuild.build({
   logLevel: 'warning',
 });
 
-const code = result.outputFiles[0].text;
-writeFileSync(outFile, code, 'utf8');
-const sha256 = createHash('sha256').update(readFileSync(outFile)).digest('hex');
+const code = result.outputFiles[0].contents;
+writeFileSync(outFile, code);
+const sha256 = createHash('sha256').update(code).digest('hex');
 writeFileSync(
   join(deskRoot, 'ui', 'vendor', 'manifest.json'),
-  JSON.stringify({ file: 'writer-body.js', bytes: code.length, sha256 }, null, 2) + '\n',
+  JSON.stringify({ file: 'writer-body.js', bytes: code.byteLength, sha256 }, null, 2) + '\n',
   'utf8',
 );
-console.log(`writer-body.js ${code.length} bytes  sha256=${sha256}`);
+console.log(`writer-body.js ${code.byteLength} bytes  sha256=${sha256}`);
