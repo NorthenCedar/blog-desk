@@ -926,6 +926,8 @@
     post: null,        // { slug, dir, frontmatter, body }
     talks: null,       // { items, title, intro, head, newline }
     talkIdx: -1,
+    links: null,       // { groups, revision, title, intro, mine }
+    linkGroupIdx: -1,
     log: null,
     logIdx: -1,
     albums: [],
@@ -949,6 +951,7 @@
     publish: { title: '发布', hint: 'npm run verify → 提交 → 推送 main', enter: () => loadPublish() },
     log: { title: '日志', hint: 'content/pages/log.md', enter: () => loadLog() },
     talks: { title: '说说', hint: 'content/pages/talks.md ＋ src/assets/talks/', enter: () => loadTalks() },
+    links: { title: '友链', hint: 'content/pages/links.md —— 友情链接与分组管理', enter: () => loadLinks() },
     photos: { title: '相册照片', hint: 'content/gallery/<相册>/（原图不部署，构建时出 webp）', enter: () => loadPhotos() },
     comments: { title: '留言', hint: '线上 Cloudflare D1（删除需要管理密钥）', enter: () => loadComments() },
     shortcuts: { title: '快捷入口', hint: '本机目录与线上站点', enter: null },
@@ -2134,6 +2137,255 @@
     $('#btn-talk-img-from-wall').addEventListener('click', guard($('#btn-talk-img-from-wall'), pickTalkImageFromGallery));
   }
 
+  /* ══════════════════ 九·五、友链 ══════════════════ */
+
+  async function loadLinks() {
+    const r = await GET('/api/links');
+    const keepTitle = S.links && S.linkGroupIdx >= 0 ? S.links.groups[S.linkGroupIdx]?.title : null;
+    S.links = {
+      groups: (r.groups || []).map((g) => ({
+        title: String(g.title || ''),
+        note: String(g.note || ''),
+        items: (g.items || []).map((it) => ({
+          name: String(it.name || ''),
+          href: String(it.href || ''),
+          desc: String(it.desc || ''),
+        })),
+      })),
+      revision: r.revision,
+    };
+    const found = keepTitle ? S.links.groups.findIndex((g) => g.title === keepTitle) : -1;
+    S.linkGroupIdx = found >= 0 ? found : (S.links.groups.length ? 0 : -1);
+    renderLinkGroupList();
+    if (S.linkGroupIdx >= 0) fillLinkGroupForm();
+    else showLinkEmpty();
+  }
+
+  function syncCurrentLinkGroupFromDOM() {
+    if (!S.links || S.linkGroupIdx < 0 || !S.links.groups[S.linkGroupIdx]) return;
+    const form = $('#link-form');
+    if (!form || form.style.display === 'none') return;
+    const g = S.links.groups[S.linkGroupIdx];
+    g.title = $('#lk-group-title').value.trim();
+    g.note = $('#lk-group-note').value.trim();
+    const rows = $$('#lk-items .link-item-card');
+    if (rows.length) {
+      g.items = rows.map((row) => ({
+        name: row.querySelector('.lk-name')?.value.trim() || '',
+        href: row.querySelector('.lk-href')?.value.trim() || '',
+        desc: row.querySelector('.lk-desc')?.value.trim() || '',
+      }));
+    }
+  }
+
+  function renderLinkGroupList() {
+    const box = $('#link-group-list');
+    if (!box) return;
+    box.innerHTML = '';
+    if (!S.links || !S.links.groups.length) {
+      box.innerHTML = '<div class="empty">还没有友链分组。</div>';
+      return;
+    }
+    S.links.groups.forEach((g, i) => {
+      const b = document.createElement('div');
+      b.className = 'item';
+      if (i === S.linkGroupIdx) b.setAttribute('aria-selected', 'true');
+      const count = (g.items || []).length;
+      const previewNames = (g.items || []).map((it) => it.name).filter(Boolean).slice(0, 3).join(' · ');
+      b.innerHTML =
+        `<div class="t">${esc(g.title || '（未命名分组）')}</div>
+         <div class="m"><span>${count} 条友链</span>${previewNames ? `<span>${esc(previewNames)}</span>` : ''}</div>`;
+      b.addEventListener('click', () => {
+        syncCurrentLinkGroupFromDOM();
+        S.linkGroupIdx = i;
+        renderLinkGroupList();
+        fillLinkGroupForm();
+      });
+      box.appendChild(b);
+    });
+  }
+
+  function showLinkEmpty() {
+    $('#link-empty').style.display = '';
+    $('#link-form').style.display = 'none';
+  }
+
+  function fillLinkGroupForm() {
+    const g = S.links?.groups?.[S.linkGroupIdx];
+    if (!g) return showLinkEmpty();
+    $('#link-empty').style.display = 'none';
+    $('#link-form').style.display = '';
+    $('#lk-group-title').value = g.title || '';
+    $('#lk-group-note').value = g.note || '';
+    $('#btn-del-link-group').disabled = (S.links.groups.length <= 1);
+    renderLinkItems(g.items || []);
+  }
+
+  function renderLinkItems(items) {
+    const box = $('#lk-items');
+    box.innerHTML = '';
+    if (!items.length) {
+      box.innerHTML = '<div class="empty">本组还没有友链，点右上方「＋ 在本组添加友链」。</div>';
+      return;
+    }
+    items.forEach((it, idx) => {
+      const card = document.createElement('div');
+      card.className = 'card link-item-card stack';
+      card.style.padding = 'var(--sp-3)';
+      card.style.gap = '8px';
+      card.innerHTML =
+        `<div class="row">
+           <label class="field grow"><span>名称 name（#${idx + 1}）</span>
+             <input type="text" class="lk-name" value="${esc(it.name || '')}" placeholder="站点名称"></label>
+           <label class="field grow" style="flex:1.6"><span>链接 href</span>
+             <input type="url" class="lk-href" value="${esc(it.href || '')}" placeholder="https://example.com/"></label>
+         </div>
+         <div class="row" style="align-items:flex-end">
+           <label class="field grow"><span>简介 desc（可空）</span>
+             <input type="text" class="lk-desc" value="${esc(it.desc || '')}" placeholder="一句话介绍"></label>
+           <div class="row tight">
+             <button type="button" class="btn sm lk-up" title="上移" ${idx === 0 ? 'disabled' : ''}>↑</button>
+             <button type="button" class="btn sm lk-down" title="下移" ${idx === items.length - 1 ? 'disabled' : ''}>↓</button>
+             <button type="button" class="btn danger sm lk-del" title="删除这条友链">删除</button>
+           </div>
+         </div>`;
+      const nameIn = card.querySelector('.lk-name');
+      const hrefIn = card.querySelector('.lk-href');
+      const descIn = card.querySelector('.lk-desc');
+      nameIn.addEventListener('input', () => { it.name = nameIn.value.trim(); });
+      hrefIn.addEventListener('input', () => { it.href = hrefIn.value.trim(); });
+      descIn.addEventListener('input', () => { it.desc = descIn.value.trim(); });
+      card.querySelector('.lk-up').addEventListener('click', () => {
+        if (idx <= 0) return;
+        syncCurrentLinkGroupFromDOM();
+        const arr = S.links.groups[S.linkGroupIdx].items;
+        [arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]];
+        renderLinkItems(arr);
+        renderLinkGroupList();
+      });
+      card.querySelector('.lk-down').addEventListener('click', () => {
+        syncCurrentLinkGroupFromDOM();
+        const arr = S.links.groups[S.linkGroupIdx].items;
+        if (idx >= arr.length - 1) return;
+        [arr[idx], arr[idx + 1]] = [arr[idx + 1], arr[idx]];
+        renderLinkItems(arr);
+        renderLinkGroupList();
+      });
+      card.querySelector('.lk-del').addEventListener('click', () => {
+        syncCurrentLinkGroupFromDOM();
+        const arr = S.links.groups[S.linkGroupIdx].items;
+        arr.splice(idx, 1);
+        renderLinkItems(arr);
+        renderLinkGroupList();
+      });
+      box.appendChild(card);
+    });
+  }
+
+  function addLinkItemToCurrentGroup() {
+    if (!S.links) return;
+    if (S.linkGroupIdx < 0) {
+      if (!S.links.groups.length) {
+        S.links.groups.push({ title: '友情链接', note: '互相惦记、彼此串门的邻居。', items: [] });
+      }
+      S.linkGroupIdx = 0;
+    } else {
+      syncCurrentLinkGroupFromDOM();
+    }
+    const g = S.links.groups[S.linkGroupIdx];
+    g.items.push({ name: '', href: 'https://', desc: '' });
+    renderLinkGroupList();
+    fillLinkGroupForm();
+    const names = $$('#lk-items .lk-name');
+    names.at(-1)?.focus();
+  }
+
+  function addNewLinkGroup() {
+    if (!S.links) return;
+    syncCurrentLinkGroupFromDOM();
+    S.links.groups.push({
+      title: '新分组',
+      note: '',
+      items: [{ name: '', href: 'https://', desc: '' }],
+    });
+    S.linkGroupIdx = S.links.groups.length - 1;
+    renderLinkGroupList();
+    fillLinkGroupForm();
+    $('#lk-group-title')?.focus();
+    $('#lk-group-title')?.select();
+  }
+
+  async function deleteCurrentLinkGroup() {
+    if (!S.links || S.linkGroupIdx < 0) return;
+    if (S.links.groups.length <= 1) {
+      toast('至少需要保留一个友链分组', true);
+      return;
+    }
+    syncCurrentLinkGroupFromDOM();
+    const g = S.links.groups[S.linkGroupIdx];
+    const ok = await askConfirm(
+      '删除这个友链分组？',
+      `会移除分组「<code>${esc(g.title || '未命名')}</code>」及其下 ${g.items.length} 条友链。`,
+      { okText: '删除分组', danger: true }
+    );
+    if (!ok) return;
+    S.links.groups.splice(S.linkGroupIdx, 1);
+    S.linkGroupIdx = Math.max(0, S.linkGroupIdx - 1);
+    await saveLinks();
+  }
+
+  async function saveLinks() {
+    if (!S.links) return;
+    syncCurrentLinkGroupFromDOM();
+    const groups = S.links.groups.map((g) => ({
+      title: String(g.title || '').trim(),
+      note: String(g.note || '').trim(),
+      items: (g.items || [])
+        .map((it) => ({
+          name: String(it.name || '').trim(),
+          href: String(it.href || '').trim(),
+          desc: String(it.desc || '').trim(),
+        }))
+        .filter((it) => it.name || (it.href && it.href !== 'https://') || it.desc),
+    }));
+    for (let gi = 0; gi < groups.length; gi++) {
+      const g = groups[gi];
+      if (!g.title) return toast(`第 ${gi + 1} 个分组标题不能为空`, true);
+      if (!g.items.length) return toast(`分组「${g.title}」下至少要有一条友链`, true);
+      for (let ii = 0; ii < g.items.length; ii++) {
+        const it = g.items[ii];
+        if (!it.name) return toast(`分组「${g.title}」第 ${ii + 1} 条友链还没有填名称`, true);
+        if (!it.href || it.href === 'https://') return toast(`友链「${it.name}」还没有填有效链接`, true);
+      }
+    }
+    const saved = await POST('/api/links', { groups, base_revision: S.links.revision });
+    S.links.revision = saved.revision;
+    S.links.groups = groups;
+    renderLinkGroupList();
+    if (S.linkGroupIdx >= 0) fillLinkGroupForm();
+    toast(`已保存友链（${saved.groups} 个分组，共 ${saved.count} 条）`);
+  }
+
+  function initLinks() {
+    $('#btn-new-link').addEventListener('click', () => addLinkItemToCurrentGroup());
+    $('#btn-add-link-item').addEventListener('click', () => addLinkItemToCurrentGroup());
+    $('#btn-new-link-group').addEventListener('click', () => addNewLinkGroup());
+    $('#btn-refresh-links').addEventListener('click', () => loadLinks().then(() => toast('重新读过了')).catch((e) => toast(e.message, true)));
+    $('#btn-save-links').addEventListener('click', () => saveLinks().catch((e) => toast(e.message, true)));
+    $('#btn-del-link-group').addEventListener('click', () => deleteCurrentLinkGroup().catch((e) => toast(e.message, true)));
+    $('#lk-group-title').addEventListener('input', () => {
+      if (S.links && S.linkGroupIdx >= 0 && S.links.groups[S.linkGroupIdx]) {
+        S.links.groups[S.linkGroupIdx].title = $('#lk-group-title').value.trim();
+        renderLinkGroupList();
+      }
+    });
+    $('#lk-group-note').addEventListener('input', () => {
+      if (S.links && S.linkGroupIdx >= 0 && S.links.groups[S.linkGroupIdx]) {
+        S.links.groups[S.linkGroupIdx].note = $('#lk-group-note').value.trim();
+      }
+    });
+  }
+
   /* ══════════════════ 十、相册照片 ══════════════════ */
 
   async function loadPhotos() {
@@ -2721,6 +2973,7 @@
     if (S.view === 'albums') return galleryEditor?.save();
     if (S.view === 'log') return saveLog();
     if (S.view === 'talks') return saveTalk();
+    if (S.view === 'links') return saveLinks();
     toast('这一页没有要保存的东西');
     return Promise.resolve();
   };
@@ -2766,6 +3019,7 @@
     initTags();
     initLog();
     initTalks();
+    initLinks();
     initPhotos();
     initComments();
     initPublish();

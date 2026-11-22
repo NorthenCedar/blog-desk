@@ -531,6 +531,88 @@ class Content:
                     best = p
         return f"v{best[0]}.{best[1] + 1}"
 
+    # ---------- 友链 links ----------
+
+    @staticmethod
+    def _validate_link_href(value: str, label: str = "友链地址") -> str:
+        from urllib.parse import urlparse
+        href = str(value or "").strip()
+        if not href or re.search(r"[\x00-\x20\\]", href):
+            raise ContentError(f"{label}不是有效链接：{value!r}")
+        if re.match(r"^/(?!/)", href):
+            return href
+        try:
+            u = urlparse(href)
+        except Exception as e:
+            raise ContentError(f"{label}不是有效链接：{value!r}") from e
+        if u.scheme == "mailto" and u.path and not u.netloc:
+            return href
+        if u.scheme in ("http", "https") and u.hostname and not u.username and not u.password:
+            return href
+        raise ContentError(f"{label}只允许站内路径、mailto 或不含账户密码的 http/https 链接：{value!r}")
+
+    def read_links(self) -> dict:
+        md = self.pages_dir / "links.md"
+        if not md.is_file():
+            raise ContentError("找不到友链页面：content/pages/links.md")
+        text, nl = self._read(md)
+        fm_text, body = split_frontmatter(text)
+        fm = parse_frontmatter(fm_text)
+        head, _ = _fm_head_upto(text, "groups")
+        return {
+            "groups": fm.get("groups", []) or [],
+            "revision": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            "title": fm.get("title", "友链"),
+            "intro": fm.get("intro", ""),
+            "mine": fm.get("mine") or {},
+            "head": head,
+            "body": body,
+            "newline": nl,
+        }
+
+    def write_links(self, groups: list[dict], base_revision: str | None = None) -> dict:
+        md = self.pages_dir / "links.md"
+        if not md.is_file():
+            raise ContentError("找不到友链页面：content/pages/links.md")
+        self._check_revision(md, base_revision)
+        text, nl = self._read(md)
+        head, _ = _fm_head_upto(text, "groups")
+        _, body = split_frontmatter(text)
+        if not isinstance(groups, list) or not groups:
+            raise ContentError("友链至少需要保留一个分组")
+        lines = ["groups:"]
+        total_items = 0
+        for gi, g in enumerate(groups):
+            if not isinstance(g, dict):
+                raise ContentError(f"第 {gi + 1} 个分组格式无效")
+            title = str(g.get("title") or "").strip()
+            if not title:
+                raise ContentError(f"第 {gi + 1} 个分组标题不能为空")
+            note = str(g.get("note") or "").strip()
+            items = g.get("items") or []
+            if not isinstance(items, list) or not items:
+                raise ContentError(f"分组「{title}」下至少需要保留一条友链")
+            lines.append(f"  - title: {yaml_scalar(title)}")
+            if note:
+                lines.append(f"    note: {yaml_scalar(note)}")
+            lines.append("    items:")
+            for ii, it in enumerate(items):
+                if not isinstance(it, dict):
+                    raise ContentError(f"分组「{title}」第 {ii + 1} 条友链格式无效")
+                name = str(it.get("name") or "").strip()
+                if not name:
+                    raise ContentError(f"分组「{title}」第 {ii + 1} 条友链名称不能为空")
+                href = self._validate_link_href(it.get("href", ""), f"友链「{name}」地址")
+                desc = str(it.get("desc") or "").strip()
+                lines.append(f"      - name: {yaml_scalar(name)}")
+                lines.append(f"        href: {yaml_scalar(href)}")
+                if desc:
+                    lines.append(f"        desc: {yaml_scalar(desc)}")
+                total_items += 1
+        new_text = f"---\n{head}\n" + "\n".join(lines) + "\n---\n" + body
+        revision = self._write(md, new_text, nl, base_revision)
+        return {"ok": True, "groups": len(groups), "count": total_items, "revision": revision}
+
     # ---------- 相册 ----------
 
     def list_albums(self) -> list[dict]:

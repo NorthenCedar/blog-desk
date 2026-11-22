@@ -14,6 +14,8 @@
   POST /api/post/delete      → 删文章
   GET  /api/talks            → 说说
   POST /api/talks            → 存说说
+  GET  /api/links            → 友链
+  POST /api/links            → 存友链
   GET  /api/log              → 日志（含下一个版本号）
   POST /api/log              → 存日志
   GET  /api/gallery          → 相册列表
@@ -360,6 +362,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(self.app.content.read_post(q.get("slug", [""])[0]))
             if u.path == "/api/talks":
                 return self._json(self.app.content.read_talks())
+            if u.path == "/api/links":
+                return self._json(self.app.content.read_links())
             if u.path == "/api/log":
                 d = self.app.content.read_log()
                 d["next_version"] = self.app.content.next_version()
@@ -476,6 +480,9 @@ class Handler(BaseHTTPRequestHandler):
 
             if u.path == "/api/talks":
                 return self._json(c.write_talks(body.get("items") or [], base_revision=self._base_revision(body)))
+
+            if u.path == "/api/links":
+                return self._json(c.write_links(body.get("groups") or [], base_revision=self._base_revision(body)))
 
             if u.path == "/api/log":
                 return self._json(c.write_log(body.get("items") or [], base_revision=self._base_revision(body)))
