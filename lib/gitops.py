@@ -277,7 +277,7 @@ def _content_changes(repo: Path) -> list[dict]:
         if "U" in entry["xy"] or entry["xy"] in ("AA", "DD"):
             raise GitError("仓库还有未解决的合并冲突，请先处理，写作台不会自动解决。")
         for path in (entry["path"], entry.get("old_path")):
-            if path and not (path.startswith(("content/", "src/assets/talks/"))
+            if path and not (path.startswith(("content/", "src/assets/talks/", "public/avatars/friends/"))
                              or path in ("src/tag-registry.ts", "docs/content-model.md")):
                 blocked.append(path)
     if blocked:
