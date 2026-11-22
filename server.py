@@ -376,6 +376,18 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/tags":
                 # 面板要的都在 tags_overview 里：items / usage / unused / doc 漂移
                 return self._json(self.app.content.tags_overview())
+            if u.path == "/api/public":
+                raw_path = q.get("path", [""])[0].lstrip("/")
+                pub_root = (self.app.repo / "public").resolve()
+                p = (pub_root / raw_path).resolve()
+                try:
+                    p.relative_to(pub_root)
+                except ValueError:
+                    return self._json({"error": "无权访问这个文件"}, 403)
+                if not p.is_file():
+                    return self._json({"error": "文件不存在"}, 404)
+                ctype = mimetypes.guess_type(str(p))[0] or "application/octet-stream"
+                return self._send(200, p.read_bytes(), ctype)
             if u.path == "/api/file":
                 # 给界面预览图片用（只允许仓库内的文件）
                 p = Path(q.get("path", [""])[0]).resolve()
@@ -512,7 +524,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(images.save_for_talk(c, name, data, mk))
                 if where == "gallery":
                     return self._json(images.save_for_gallery(c, body["album"], name, data, mk))
-                raise ContentError("不知道这张图该放哪（where 必须是 post / talks / gallery）")
+                if where == "link_avatar":
+                    return self._json(images.save_for_link_avatar(c, name, data, min(mk, 200)))
+                raise ContentError("不知道这张图该放哪（where 必须是 post / talks / gallery / link_avatar）")
 
             if u.path == "/api/image/delete":
                 return self._json(images.delete_image(body.get("path", "")))

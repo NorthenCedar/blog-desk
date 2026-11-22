@@ -603,9 +603,14 @@ class Content:
                 if not name:
                     raise ContentError(f"分组「{title}」第 {ii + 1} 条友链名称不能为空")
                 href = self._validate_link_href(it.get("href", ""), f"友链「{name}」地址")
+                avatar = str(it.get("avatar") or "").strip()
+                if avatar:
+                    avatar = self._validate_link_href(avatar, f"友链「{name}」头像地址")
                 desc = str(it.get("desc") or "").strip()
                 lines.append(f"      - name: {yaml_scalar(name)}")
                 lines.append(f"        href: {yaml_scalar(href)}")
+                if avatar:
+                    lines.append(f"        avatar: {yaml_scalar(avatar)}")
                 if desc:
                     lines.append(f"        desc: {yaml_scalar(desc)}")
                 total_items += 1

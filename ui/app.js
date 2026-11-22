@@ -2149,6 +2149,7 @@
         items: (g.items || []).map((it) => ({
           name: String(it.name || ''),
           href: String(it.href || ''),
+          avatar: String(it.avatar || ''),
           desc: String(it.desc || ''),
         })),
       })),
@@ -2173,9 +2174,23 @@
       g.items = rows.map((row) => ({
         name: row.querySelector('.lk-name')?.value.trim() || '',
         href: row.querySelector('.lk-href')?.value.trim() || '',
+        avatar: row.querySelector('.lk-avatar')?.value.trim() || '',
         desc: row.querySelector('.lk-desc')?.value.trim() || '',
       }));
     }
+  }
+
+  function linkAvatarPreviewSrc(raw) {
+    const s = String(raw || '').trim();
+    if (!s) return '';
+    if (s === 'https://northcedar.top/my-avatar' || s === '/my-avatar') {
+      return '/api/public?path=' + encodeURIComponent('/my-avatar.jpg');
+    }
+    if (/^\/(?!\/)/.test(s)) {
+      return '/api/public?path=' + encodeURIComponent(s);
+    }
+    if (/^https?:\/\//i.test(s)) return s;
+    return '';
   }
 
   function renderLinkGroupList() {
@@ -2233,12 +2248,22 @@
       card.className = 'card link-item-card stack';
       card.style.padding = 'var(--sp-3)';
       card.style.gap = '8px';
+      const avatarSrc = linkAvatarPreviewSrc(it.avatar);
       card.innerHTML =
         `<div class="row">
            <label class="field grow"><span>名称 name（#${idx + 1}）</span>
              <input type="text" class="lk-name" value="${esc(it.name || '')}" placeholder="站点名称"></label>
            <label class="field grow" style="flex:1.6"><span>链接 href</span>
              <input type="url" class="lk-href" value="${esc(it.href || '')}" placeholder="https://example.com/"></label>
+         </div>
+         <div class="row" style="align-items:flex-end">
+           <img class="lk-avatar-thumb" ${avatarSrc ? `src="${esc(avatarSrc)}"` : 'hidden'} alt="">
+           <label class="field grow"><span>头像 avatar（可空，支持链接或点击右侧上传）</span>
+             <input type="text" class="lk-avatar" value="${esc(it.avatar || '')}" placeholder="/avatars/friends/... 或 https://..."></label>
+           <div class="row tight">
+             <button type="button" class="btn sm lk-avatar-upload">上传头像</button>
+             <button type="button" class="btn sm lk-avatar-clear" ${String(it.avatar || '').trim() ? '' : 'disabled'}>清除</button>
+           </div>
          </div>
          <div class="row" style="align-items:flex-end">
            <label class="field grow"><span>简介 desc（可空）</span>
@@ -2251,10 +2276,42 @@
          </div>`;
       const nameIn = card.querySelector('.lk-name');
       const hrefIn = card.querySelector('.lk-href');
+      const avatarIn = card.querySelector('.lk-avatar');
+      const avatarThumb = card.querySelector('.lk-avatar-thumb');
+      const uploadBtn = card.querySelector('.lk-avatar-upload');
+      const clearBtn = card.querySelector('.lk-avatar-clear');
       const descIn = card.querySelector('.lk-desc');
+      const syncAvatarUI = () => {
+        const preview = linkAvatarPreviewSrc(it.avatar);
+        if (preview) {
+          avatarThumb.src = preview;
+          avatarThumb.hidden = false;
+        } else {
+          avatarThumb.removeAttribute('src');
+          avatarThumb.hidden = true;
+        }
+        clearBtn.disabled = !String(it.avatar || '').trim();
+      };
       nameIn.addEventListener('input', () => { it.name = nameIn.value.trim(); });
       hrefIn.addEventListener('input', () => { it.href = hrefIn.value.trim(); });
+      avatarIn.addEventListener('input', () => { it.avatar = avatarIn.value.trim(); syncAvatarUI(); });
       descIn.addEventListener('input', () => { it.desc = descIn.value.trim(); });
+      uploadBtn.addEventListener('click', guard(uploadBtn, async () => {
+        const files = await pickFiles('image/*');
+        if (!files || !files.length) return;
+        const f = files[0];
+        const data = await fileToDataURL(f);
+        const res = await POST('/api/upload', { where: 'link_avatar', name: f.name, data, max_kb: 200 });
+        it.avatar = res.rel;
+        avatarIn.value = res.rel;
+        syncAvatarUI();
+        toast(`头像已上传：${res.name}`);
+      }));
+      clearBtn.addEventListener('click', () => {
+        it.avatar = '';
+        avatarIn.value = '';
+        syncAvatarUI();
+      });
       card.querySelector('.lk-up').addEventListener('click', () => {
         if (idx <= 0) return;
         syncCurrentLinkGroupFromDOM();
@@ -2293,7 +2350,7 @@
       syncCurrentLinkGroupFromDOM();
     }
     const g = S.links.groups[S.linkGroupIdx];
-    g.items.push({ name: '', href: 'https://', desc: '' });
+    g.items.push({ name: '', href: 'https://', avatar: '', desc: '' });
     renderLinkGroupList();
     fillLinkGroupForm();
     const names = $$('#lk-items .lk-name');
@@ -2306,7 +2363,7 @@
     S.links.groups.push({
       title: '新分组',
       note: '',
-      items: [{ name: '', href: 'https://', desc: '' }],
+      items: [{ name: '', href: 'https://', avatar: '', desc: '' }],
     });
     S.linkGroupIdx = S.links.groups.length - 1;
     renderLinkGroupList();
@@ -2344,9 +2401,10 @@
         .map((it) => ({
           name: String(it.name || '').trim(),
           href: String(it.href || '').trim(),
+          avatar: String(it.avatar || '').trim(),
           desc: String(it.desc || '').trim(),
         }))
-        .filter((it) => it.name || (it.href && it.href !== 'https://') || it.desc),
+        .filter((it) => it.name || (it.href && it.href !== 'https://') || it.avatar || it.desc),
     }));
     for (let gi = 0; gi < groups.length; gi++) {
       const g = groups[gi];

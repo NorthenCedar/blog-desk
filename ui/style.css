@@ -773,3 +773,14 @@ body.bare .titlebar { cursor: default; }
 }
 .desk-audio audio { flex: 1 1 auto; min-width: 0; height: 2rem; }
 .desk-audio .hint { flex: 0 0 auto; font-family: var(--fs-mono, monospace); font-size: var(--fs-xs, .75rem); }
+
+.lk-avatar-thumb {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--desk-rim);
+  background: var(--paper);
+  flex: none;
+}
+.lk-avatar-thumb[hidden] { display: none; }

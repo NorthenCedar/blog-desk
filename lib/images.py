@@ -262,6 +262,34 @@ def save_for_gallery(content, album: str, filename: str, data: bytes,
             "report": report, "rel": f"./{target.name}"}
 
 
+def save_for_link_avatar(content, filename: str, data: bytes,
+                         max_kb: int = 200, compress: bool = True) -> dict:
+    """存进 public/avatars/friends/，用内容摘要命名且仅保留纯英文名。"""
+    _ = filename
+    ext = real_ext(data)
+    if ext is None or ext not in IMAGE_EXT:
+        raise ImageError("这不是能识别的图片文件")
+    report = {}
+    if compress:
+        data, report = compress_image(data, max_kb, max_edge=512)
+        ext = real_ext(data) or ext
+    digest = hashlib.sha256(data).hexdigest()[:12]
+    d = content.repo / "public" / "avatars" / "friends"
+    d.mkdir(parents=True, exist_ok=True)
+    target = d / f"friend-{digest}{ext}"
+    if not (target.is_file() and target.read_bytes() == data):
+        target.write_bytes(data)
+    report.setdefault("stored_as", target.suffix.lower())
+    return {
+        "ok": True,
+        "name": target.name,
+        "dir": "link_avatar",
+        "path": str(target),
+        "report": report,
+        "rel": f"/avatars/friends/{target.name}",
+    }
+
+
 def list_gallery_photos(content, album: str | None = None) -> list[dict]:
     """列出相册里的照片（原图），给界面上的照片墙用。"""
     out = []
