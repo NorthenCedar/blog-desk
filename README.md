@@ -198,7 +198,6 @@ cp313 二进制 0 个。安装目录与构建产物**逐文件一一对应**，�
 ```powershell
 $env:BLOG_REPO = (Resolve-Path '..\blog').Path
 node _tools/bundle-writer.mjs
-node --test _test_code_block.cjs
 ```
 
 ## 造物台
@@ -206,24 +205,6 @@ node --test _test_code_block.cjs
 侧栏「造物台」可维护项目和页面文案。项目支持资料、Markdown正文、排序、链接、六种图片动效与自动选择，以及最多6项主图/说明/可选暗色替图。现有作品的界面模型及原资料会保留；新项目默认照片展示。英文短名最多60字符，创建后固定。
 
 「页面文案」可以修改页头、三条滚动提示、作品区与工作手记，不需要写YAML。保存会检查原文件版本，外部修改会提示冲突；保存到本地后仍需在发布页完整校验、普通提交与推送。云端对应入口位于本站写作台，保存私密草稿和正式发布分开。
-
-## 测试
-
-`_t1.py` … `_t10.py` 是逐组的能力测试，`_mutate_t*.py` 是对应的变异验证
-（故意改坏生产代码，确认测试真的会红）。跑法：
-
-```bash
-python _t5.py
-python _mutate_t5.py
-```
-
-发布与同步回归使用真实临时 Git 仓库和本地裸远端，不连接 GitHub：
-`python -m unittest _test_publish_safety _test_publish_snapshot _test_videos`。
-界面启动与编辑保护：`node --test _test_code_block.cjs _test_heading_format.cjs _test_save_context.cjs _test_sync_client.cjs`。
-请使用已安装 Pillow、PyYAML 的应用构建虚拟环境；临时目录可通过 `TEMP`/`TMP` 指定到本次独立 `work` 目录。
-
-变异验证的意义：只有"把代码改坏、测试确实变红"才能证明那条测试真的在守这个
-不变量。全绿但改坏了照样还绿，等于没测。
 
 ## 目录
 

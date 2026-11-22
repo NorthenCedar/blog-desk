@@ -19,6 +19,4 @@ Set-Location D:/router/work/blog-desk-visual-writer
 
 该命令启动新服务；现有写作台窗口保持原状。首次体验建议给 `--repo` 指定另一个测试博客副本。若只需服务测试，用 `--no-open --port 18742` 替代 `--browser`。构建安装包和替换安装版需要另行执行，本次没有执行。
 
-共享预览的固定镜像清单在 `sync-album-preview.py`，通过 `python sync-album-preview.py <站点源码目录>` 同步。`_test_gallery.py` 对照站点源码逐字节检验镜像及 Python/JavaScript 推荐结果。打包脚本现有 `--add-data ui;ui` 会包含这些静态模块与字体。
-
-回归：`python _test_gallery.py`、`node _test_gallery.cjs`、`python _test_forge.py`、`node _test_forge.cjs`、`python _test_publish_snapshot.py`、`python _test_publish_safety.py`。Git 发布测试使用 work 下的临时仓库和本地 bare remote；不会联网推送正式站。
+共享预览的固定镜像清单在 `sync-album-preview.py`，通过 `python sync-album-preview.py <站点源码目录>` 同步。打包脚本现有 `--add-data ui;ui` 会包含这些静态模块与字体。
