@@ -172,6 +172,14 @@
       $('#forge-status').textContent = '';
     }
 
+    function syncListActive() {
+      const activeSlug = session.current && !session.current.create ? session.current.slug : null;
+      $('#forge-list')?.querySelectorAll('.list-item').forEach(button => {
+        if (activeSlug && button.dataset.slug === activeSlug) button.setAttribute('aria-current', 'true');
+        else button.removeAttribute('aria-current');
+      });
+    }
+
     async function loadList() {
       projects = (await GET('/api/projects')).items || [];
       const box = $('#forge-list'); box.replaceChildren();
@@ -179,11 +187,12 @@
       for (const project of projects) {
         const button = document.createElement('button');
         button.className = 'list-item';
+        button.dataset.slug = project.slug;
         button.innerHTML = `<strong>${esc(project.title)}</strong><span class="hint">${esc(project.status)} · 排序 ${esc(project.order)}</span>`;
-        if (project.slug === session.current?.slug) button.setAttribute('aria-current', 'true');
         button.addEventListener('click', run(() => openProject(project.slug)));
         box.append(button);
       }
+      syncListActive();
     }
 
     async function enter() {
@@ -222,6 +231,7 @@
 
     function renderProject() {
       mode = 'projects'; tabs(); $('#forge-sidebar').hidden = false;
+      syncListActive();
       const project = session.current, fm = project.frontmatter;
       const modelVisual = project.modelVisual || fm.visual;
       gallery = clone(fm.images || []); links = clone(fm.links || []);
