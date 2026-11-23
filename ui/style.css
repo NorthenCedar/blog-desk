@@ -382,6 +382,7 @@ textarea::-webkit-scrollbar-thumb { cursor: default; }
   padding: 1px 6px; border-radius: 100px; border: 1px solid var(--hair); color: var(--muted);
 }
 .badge.draft { color: var(--warn); border-color: #b4530940; background: #b453090f; }
+.badge.pinned { color: var(--accent-ink); border-color: #2d7d4640; background: var(--accent-wash); }
 
 /* 编辑器 */
 .editor { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }

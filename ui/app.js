@@ -1005,6 +1005,7 @@
         `<div class="t">${esc(p.title || '（无标题）')}</div>
          <div class="m">
            <span>${esc(p.date || '无日期')}</span>
+           ${p.pinned ? '<span class="badge pinned">置顶</span>' : ''}
            ${p.draft ? '<span class="badge draft">草稿</span>' : ''}
            ${p.broken ? '<span class="badge draft">读不出</span>' : ''}
            <span>${p.words || 0} 字</span>
@@ -1183,6 +1184,7 @@
     $('#f-title').value = fm.title || '';
     $('#f-date').value = String(fm.date || '').slice(0, 10);
     $('#f-draft').value = fm.draft ? 'true' : 'false';
+    $('#f-pinned').value = fm.pinned ? 'true' : 'false';
     $('#f-summary').value = fm.summary || '';
     $('#f-slug').value = slug;
     $('#f-updated').value = String(fm.updated || '').slice(0, 10);
@@ -1258,6 +1260,8 @@
     const tags = chosenTags();
     if (tags.length) fm.tags = tags; else delete fm.tags;
     fm.draft = $('#f-draft').value === 'true';
+    if ($('#f-pinned').value === 'true') fm.pinned = true;
+    else delete fm.pinned;
     return { frontmatter: fm, body: $('#f-body').value };
   }
 

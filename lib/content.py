@@ -182,10 +182,10 @@ def replace_frontmatter_key(text: str, key: str, value) -> str:
 
 # ────────────────────────────── 文章 posts ──────────────────────────────
 
-# frontmatter 字段的**规范顺序**（content-model.md §1 的 9 个字段）。
+# frontmatter 字段的**规范顺序**（content-model.md §1 + 置顶）。
 # 写回时按这个顺序排，diff 才稳定。
 POST_FIELD_ORDER = [
-    "title", "date", "updated", "summary", "tags", "draft", "cover", "coverAlt", "slug",
+    "title", "date", "updated", "summary", "tags", "draft", "pinned", "cover", "coverAlt", "slug",
 ]
 
 
@@ -201,6 +201,9 @@ def render_post_frontmatter(fm: dict) -> str:
             out.append(f"tags: [{items}]")
         elif k == "draft":
             out.append(f"draft: {'true' if v else 'false'}")
+        elif k == "pinned":
+            if v:
+                out.append("pinned: true")
         else:
             out.append(f"{k}: {yaml_scalar(v)}")
     # 未登记字段原样保留（内容模型规则 6：只警告不失败）—— 这里不主动丢
@@ -340,6 +343,7 @@ class Content:
                 "summary": fm.get("summary", ""),
                 "tags": fm.get("tags", []) or [],
                 "draft": bool(fm.get("draft", False)),
+                "pinned": bool(fm.get("pinned", False)),
                 "cover": fm.get("cover", "") or "",
                 "coverAlt": fm.get("coverAlt", "") or "",
                 "images": sorted(p.name for p in d.iterdir()
@@ -347,7 +351,7 @@ class Content:
                                  (".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif")),
                 "words": len(split_frontmatter(text)[1]),
             })
-        out.sort(key=lambda x: (x.get("date") or ""), reverse=True)
+        out.sort(key=lambda x: (bool(x.get("pinned")), x.get("date") or ""), reverse=True)
         return out
 
     def read_post(self, slug: str) -> dict:
