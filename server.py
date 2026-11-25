@@ -364,6 +364,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(self.app.content.read_talks())
             if u.path == "/api/links":
                 return self._json(self.app.content.read_links())
+            if u.path == "/api/resources":
+                return self._json(self.app.content.read_resources())
             if u.path == "/api/log":
                 d = self.app.content.read_log()
                 d["next_version"] = self.app.content.next_version()
@@ -495,6 +497,12 @@ class Handler(BaseHTTPRequestHandler):
 
             if u.path == "/api/links":
                 return self._json(c.write_links(body.get("groups") or [], base_revision=self._base_revision(body)))
+            if u.path == "/api/resources":
+                return self._json(c.write_resources(
+                    body.get("groups") or [],
+                    intro=body.get("intro"),
+                    base_revision=self._base_revision(body),
+                ))
 
             if u.path == "/api/log":
                 return self._json(c.write_log(body.get("items") or [], base_revision=self._base_revision(body)))
@@ -526,7 +534,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(images.save_for_gallery(c, body["album"], name, data, mk))
                 if where == "link_avatar":
                     return self._json(images.save_for_link_avatar(c, name, data, min(mk, 200)))
-                raise ContentError("不知道这张图该放哪（where 必须是 post / talks / gallery / link_avatar）")
+                if where == "resource_cover":
+                    return self._json(images.save_for_resource_cover(c, name, data, min(mk, 400)))
+                raise ContentError("不知道这张图该放哪（where 必须是 post / talks / gallery / link_avatar / resource_cover）")
 
             if u.path == "/api/image/delete":
                 return self._json(images.delete_image(body.get("path", "")))

@@ -165,11 +165,12 @@
   };
 
   /** 文件选择。用户取消时也要 resolve（否则 await 永远挂着）。 */
-  function pickFiles(accept = 'image/*') {
+  function pickFiles(accept = 'image/*', multiple = false) {
     return new Promise((resolve) => {
       const inp = $('#file-pick');
       inp.value = '';
       inp.accept = accept;
+      inp.multiple = !!multiple;
       let settled = false;
       const finish = (files) => {
         if (settled) return;
@@ -928,6 +929,8 @@
     talkIdx: -1,
     links: null,       // { groups, revision, title, intro, mine }
     linkGroupIdx: -1,
+    resources: null,   // { groups, intro, revision, title }
+    resGroupIdx: -1,
     log: null,
     logIdx: -1,
     albums: [],
@@ -952,6 +955,7 @@
     log: { title: '日志', hint: 'content/pages/log.md', enter: () => loadLog() },
     talks: { title: '说说', hint: 'content/pages/talks.md ＋ src/assets/talks/', enter: () => loadTalks() },
     links: { title: '友链', hint: 'content/pages/links.md —— 友情链接与分组管理', enter: () => loadLinks() },
+    resources: { title: '资源', hint: 'content/pages/resources.md —— 应用/小说/网址分类与外链管理', enter: () => loadResources() },
     photos: { title: '相册照片', hint: 'content/gallery/<相册>/（原图不部署，构建时出 webp）', enter: () => loadPhotos() },
     comments: { title: '留言', hint: '线上 Cloudflare D1（删除需要管理密钥）', enter: () => loadComments() },
     shortcuts: { title: '快捷入口', hint: '本机目录与线上站点', enter: null },
@@ -2184,7 +2188,7 @@
     }
   }
 
-  function linkAvatarPreviewSrc(raw) {
+  function previewPublicAsset(raw) {
     const s = String(raw || '').trim();
     if (!s) return '';
     if (s === 'https://northcedar.top/my-avatar' || s === '/my-avatar') {
@@ -2195,6 +2199,10 @@
     }
     if (/^https?:\/\//i.test(s)) return s;
     return '';
+  }
+
+  function linkAvatarPreviewSrc(raw) {
+    return previewPublicAsset(raw);
   }
 
   function renderLinkGroupList() {
@@ -2444,6 +2452,489 @@
     $('#lk-group-note').addEventListener('input', () => {
       if (S.links && S.linkGroupIdx >= 0 && S.links.groups[S.linkGroupIdx]) {
         S.links.groups[S.linkGroupIdx].note = $('#lk-group-note').value.trim();
+      }
+    });
+  }
+
+  /* ══════════════════ 九·二、资源页 ══════════════════ */
+
+  function parseResourceTagsInput(raw) {
+    return String(raw || '')
+      .split(/[,，]+/)
+      .map((t) => t.trim())
+      .filter(Boolean)
+      .slice(0, 4);
+  }
+
+  async function loadResources() {
+    const r = await GET('/api/resources');
+    const keepTitle = S.resources && S.resGroupIdx >= 0 ? S.resources.groups[S.resGroupIdx]?.title : null;
+    S.resources = {
+      intro: String(r.intro || ''),
+      groups: (r.groups || []).map((g) => ({
+        title: String(g.title || ''),
+        note: String(g.note || ''),
+        items: (g.items || []).map((it) => ({
+          name: String(it.name || ''),
+          href: String(it.href || ''),
+          summary: String(it.summary || ''),
+          detail: String(it.detail || ''),
+          badge: String(it.badge || ''),
+          cta: String(it.cta || ''),
+          code: String(it.code || ''),
+          cover: String(it.cover || ''),
+          images: Array.isArray(it.images) ? it.images.map((s) => String(s || '').trim()).filter(Boolean).slice(0, 4) : [],
+          tags: Array.isArray(it.tags) ? it.tags.map((t) => String(t || '').trim()).filter(Boolean) : [],
+        })),
+      })),
+      revision: r.revision,
+    };
+    const introIn = $('#rs-intro');
+    if (introIn) introIn.value = S.resources.intro;
+    const found = keepTitle ? S.resources.groups.findIndex((g) => g.title === keepTitle) : -1;
+    S.resGroupIdx = found >= 0 ? found : (S.resources.groups.length ? 0 : -1);
+    renderResourceGroupList();
+    if (S.resGroupIdx >= 0) fillResourceGroupForm();
+    else showResourceEmpty();
+  }
+
+  function syncCurrentResourceGroupFromDOM() {
+    if (!S.resources) return;
+    const introIn = $('#rs-intro');
+    if (introIn) S.resources.intro = introIn.value.trim();
+    if (S.resGroupIdx < 0 || !S.resources.groups[S.resGroupIdx]) return;
+    const form = $('#res-form');
+    if (!form || form.style.display === 'none') return;
+    const g = S.resources.groups[S.resGroupIdx];
+    g.title = $('#rs-group-title').value.trim();
+    g.note = $('#rs-group-note').value.trim();
+    const rows = $$('#res-items .res-item-card');
+    if (rows.length) {
+      g.items = rows.map((row) => ({
+        name: row.querySelector('.rs-name')?.value.trim() || '',
+        href: row.querySelector('.rs-href')?.value.trim() || '',
+        summary: row.querySelector('.rs-summary')?.value.trim() || '',
+        detail: row.querySelector('.rs-detail')?.value.trim() || '',
+        badge: row.querySelector('.rs-badge')?.value.trim() || '',
+        cta: row.querySelector('.rs-cta')?.value.trim() || '',
+        code: row.querySelector('.rs-code')?.value.trim() || '',
+        cover: row.querySelector('.rs-cover')?.value.trim() || '',
+        images: Array.from(row.querySelectorAll('.rs-img-card')).map((el) => el.dataset.src || '').filter(Boolean).slice(0, 4),
+        tags: parseResourceTagsInput(row.querySelector('.rs-tags')?.value || ''),
+      }));
+    }
+  }
+
+  function renderResourceGroupList() {
+    const box = $('#res-group-list');
+    if (!box) return;
+    box.innerHTML = '';
+    if (!S.resources || !S.resources.groups.length) {
+      box.innerHTML = '<div class="empty">还没有资源分类。</div>';
+      return;
+    }
+    S.resources.groups.forEach((g, i) => {
+      const b = document.createElement('div');
+      b.className = 'item';
+      if (i === S.resGroupIdx) b.setAttribute('aria-selected', 'true');
+      const count = (g.items || []).length;
+      const previewNames = (g.items || []).map((it) => it.name).filter(Boolean).slice(0, 3).join(' · ');
+      b.innerHTML =
+        `<div class="t">${esc(g.title || '（未命名分类）')}</div>
+         <div class="m"><span>${count} 条资源</span>${previewNames ? `<span>${esc(previewNames)}</span>` : ''}</div>`;
+      b.addEventListener('click', () => {
+        syncCurrentResourceGroupFromDOM();
+        S.resGroupIdx = i;
+        renderResourceGroupList();
+        fillResourceGroupForm();
+      });
+      box.appendChild(b);
+    });
+  }
+
+  function showResourceEmpty() {
+    $('#res-empty').style.display = '';
+    $('#res-form').style.display = 'none';
+  }
+
+  function fillResourceGroupForm() {
+    const g = S.resources?.groups?.[S.resGroupIdx];
+    if (!g) return showResourceEmpty();
+    $('#res-empty').style.display = 'none';
+    $('#res-form').style.display = '';
+    $('#rs-group-title').value = g.title || '';
+    $('#rs-group-note').value = g.note || '';
+    $('#btn-res-group-up').disabled = S.resGroupIdx <= 0;
+    $('#btn-res-group-down').disabled = S.resGroupIdx >= S.resources.groups.length - 1;
+    $('#btn-del-res-group').disabled = (S.resources.groups.length <= 1);
+    renderResourceItems(g.items || []);
+  }
+
+  function renderResourceItems(items) {
+    const box = $('#res-items');
+    box.innerHTML = '';
+    if (!items.length) {
+      box.innerHTML = '<div class="empty">本分类还没有资源，点右上方「＋ 在本类添加资源」。</div>';
+      return;
+    }
+    items.forEach((it, idx) => {
+      const card = document.createElement('div');
+      card.className = 'card res-item-card stack';
+      card.style.padding = 'var(--sp-3)';
+      card.style.gap = '8px';
+      const coverSrc = previewPublicAsset(it.cover);
+      const tagsValue = Array.isArray(it.tags) ? it.tags.join(', ') : '';
+      card.innerHTML =
+        `<div class="row">
+           <label class="field grow"><span>名称 name（#${idx + 1}，必填）</span>
+             <input type="text" class="rs-name" maxlength="80" value="${esc(it.name || '')}" placeholder="工具 / 电子书 / 网站名称"></label>
+           <label class="field grow" style="flex:1.6"><span>链接 href（必填，建议填 R2 / Releases / 网盘或官方网址）</span>
+             <input type="url" class="rs-href" maxlength="500" value="${esc(it.href || '')}" placeholder="https://example.com/"></label>
+         </div>
+         <div class="row">
+           <label class="field grow"><span>一句话简介 summary（卡片正面展示，必填）</span>
+             <input type="text" class="rs-summary" maxlength="160" value="${esc(it.summary || '')}" placeholder="一句话说明用途或亮点"></label>
+         </div>
+         <div class="row">
+           <label class="field grow"><span>角标 badge（可空）</span>
+             <input type="text" class="rs-badge" maxlength="40" value="${esc(it.badge || '')}" placeholder="如 Windows · 开源"></label>
+           <label class="field grow"><span>按钮文案 cta（可空）</span>
+             <input type="text" class="rs-cta" maxlength="24" value="${esc(it.cta || '')}" placeholder="如 前往下载"></label>
+           <label class="field grow"><span>提取码 code（可空）</span>
+             <input type="text" class="rs-code" maxlength="64" value="${esc(it.code || '')}" placeholder="网盘提取码 / 解压密码"></label>
+           <label class="field grow"><span>标签 tags（逗号分隔，最多 4 个）</span>
+             <input type="text" class="rs-tags" value="${esc(tagsValue)}" placeholder="自研, 效率"></label>
+         </div>
+         <div class="row">
+           <label class="field grow"><span>详细说明 detail（点击立起模块后显示；支持 [文字](https://...) 或直接粘贴网址，展示时点击新标签页打开，最多 1200 字）</span>
+             <textarea class="rs-detail" rows="3" maxlength="1200" placeholder="版本说明、使用建议，可直接贴链接或写 [官方文档](https://...)">${esc(it.detail || '')}</textarea></label>
+         </div>
+         <div class="rs-images-box stack">
+           <div class="row" style="justify-content:space-between;align-items:center">
+             <span class="hint">模块内容配图 images（最多 4 张，直接展示在立起模块内）</span>
+             <button type="button" class="btn sm rs-imgs-upload">＋ 上传内容图片</button>
+           </div>
+           <div class="rs-images-grid"></div>
+           <div class="row tight">
+             <input type="text" class="rs-img-url grow" maxlength="400" placeholder="或粘贴图片链接（/resources/covers/... 或 https://...）">
+             <button type="button" class="btn sm rs-img-add-url">添加图片链接</button>
+           </div>
+         </div>
+         <div class="row" style="align-items:flex-end">
+           <img class="rs-cover-thumb" ${coverSrc ? `src="${esc(coverSrc)}"` : 'hidden'} alt="">
+           <label class="field grow"><span>封面图 cover（可空，支持链接或点击右侧上传）</span>
+             <input type="text" class="rs-cover" maxlength="400" value="${esc(it.cover || '')}" placeholder="/resources/covers/... 或 https://..."></label>
+           <div class="row tight">
+             <button type="button" class="btn sm rs-cover-upload">上传封面</button>
+             <button type="button" class="btn sm rs-cover-clear" ${String(it.cover || '').trim() ? '' : 'disabled'}>清除</button>
+             <button type="button" class="btn sm rs-up" title="上移" ${idx === 0 ? 'disabled' : ''}>↑</button>
+             <button type="button" class="btn sm rs-down" title="下移" ${idx === items.length - 1 ? 'disabled' : ''}>↓</button>
+             <button type="button" class="btn danger sm rs-del" title="删除这条资源">删除</button>
+           </div>
+         </div>`;
+
+      const nameIn = card.querySelector('.rs-name');
+      const hrefIn = card.querySelector('.rs-href');
+      const summaryIn = card.querySelector('.rs-summary');
+      const badgeIn = card.querySelector('.rs-badge');
+      const ctaIn = card.querySelector('.rs-cta');
+      const codeIn = card.querySelector('.rs-code');
+      const tagsIn = card.querySelector('.rs-tags');
+      const detailIn = card.querySelector('.rs-detail');
+      const coverIn = card.querySelector('.rs-cover');
+      const coverThumb = card.querySelector('.rs-cover-thumb');
+      const uploadBtn = card.querySelector('.rs-cover-upload');
+      const clearBtn = card.querySelector('.rs-cover-clear');
+      const imgsGrid = card.querySelector('.rs-images-grid');
+      const imgsUploadBtn = card.querySelector('.rs-imgs-upload');
+      const imgUrlIn = card.querySelector('.rs-img-url');
+      const imgAddUrlBtn = card.querySelector('.rs-img-add-url');
+
+      if (!Array.isArray(it.images)) it.images = [];
+      const renderContentImages = () => {
+        const list = Array.isArray(it.images) ? it.images.filter(Boolean).slice(0, 4) : [];
+        it.images = list;
+        imgsGrid.innerHTML = '';
+        list.forEach((src, imgIdx) => {
+          const tile = document.createElement('div');
+          tile.className = 'rs-img-card';
+          tile.dataset.src = src;
+          const prev = previewPublicAsset(src);
+          tile.innerHTML =
+            `${prev ? `<img class="rs-img-thumb" src="${esc(prev)}" alt="">` : `<div class="rs-img-thumb rs-img-fallback">${esc(src)}</div>`}
+             <div class="row tight" style="justify-content:center">
+               <button type="button" class="btn sm rs-img-prev" title="前移" ${imgIdx === 0 ? 'disabled' : ''}>←</button>
+               <button type="button" class="btn sm rs-img-next" title="后移" ${imgIdx === list.length - 1 ? 'disabled' : ''}>→</button>
+               <button type="button" class="btn danger sm rs-img-del" title="移除">×</button>
+             </div>`;
+          tile.querySelector('.rs-img-prev').addEventListener('click', () => {
+            if (imgIdx <= 0) return;
+            [it.images[imgIdx - 1], it.images[imgIdx]] = [it.images[imgIdx], it.images[imgIdx - 1]];
+            renderContentImages();
+          });
+          tile.querySelector('.rs-img-next').addEventListener('click', () => {
+            if (imgIdx >= it.images.length - 1) return;
+            [it.images[imgIdx], it.images[imgIdx + 1]] = [it.images[imgIdx + 1], it.images[imgIdx]];
+            renderContentImages();
+          });
+          tile.querySelector('.rs-img-del').addEventListener('click', () => {
+            it.images.splice(imgIdx, 1);
+            renderContentImages();
+          });
+          imgsGrid.appendChild(tile);
+        });
+        imgsUploadBtn.disabled = list.length >= 4;
+        imgAddUrlBtn.disabled = list.length >= 4;
+      };
+      renderContentImages();
+
+      imgsUploadBtn.addEventListener('click', guard(imgsUploadBtn, async () => {
+        const remain = 4 - (it.images?.length || 0);
+        if (remain <= 0) return toast('每个资源模块最多添加 4 张内容配图', true);
+        const files = await pickFiles('image/*', true);
+        if (!files || !files.length) return;
+        let added = 0;
+        for (const f of files.slice(0, remain)) {
+          const data = await fileToDataURL(f);
+          const res = await POST('/api/upload', { where: 'resource_cover', name: f.name, data, max_kb: 400 });
+          it.images.push(res.rel);
+          added++;
+        }
+        renderContentImages();
+        toast(`已添加 ${added} 张模块内容配图`);
+      }));
+      imgAddUrlBtn.addEventListener('click', () => {
+        const u = imgUrlIn.value.trim();
+        if (!u) return;
+        if ((it.images?.length || 0) >= 4) return toast('每个资源模块最多添加 4 张内容配图', true);
+        it.images.push(u);
+        imgUrlIn.value = '';
+        renderContentImages();
+      });
+
+      const syncCoverUI = () => {
+        const preview = previewPublicAsset(it.cover);
+        if (preview) {
+          coverThumb.src = preview;
+          coverThumb.hidden = false;
+        } else {
+          coverThumb.removeAttribute('src');
+          coverThumb.hidden = true;
+        }
+        clearBtn.disabled = !String(it.cover || '').trim();
+      };
+
+      nameIn.addEventListener('input', () => { it.name = nameIn.value.trim(); });
+      hrefIn.addEventListener('input', () => { it.href = hrefIn.value.trim(); });
+      summaryIn.addEventListener('input', () => { it.summary = summaryIn.value.trim(); });
+      badgeIn.addEventListener('input', () => { it.badge = badgeIn.value.trim(); });
+      ctaIn.addEventListener('input', () => { it.cta = ctaIn.value.trim(); });
+      codeIn.addEventListener('input', () => { it.code = codeIn.value.trim(); });
+      tagsIn.addEventListener('input', () => { it.tags = parseResourceTagsInput(tagsIn.value); });
+      detailIn.addEventListener('input', () => { it.detail = detailIn.value.trim(); });
+      coverIn.addEventListener('input', () => { it.cover = coverIn.value.trim(); syncCoverUI(); });
+
+      uploadBtn.addEventListener('click', guard(uploadBtn, async () => {
+        const files = await pickFiles('image/*');
+        if (!files || !files.length) return;
+        const f = files[0];
+        const data = await fileToDataURL(f);
+        const res = await POST('/api/upload', { where: 'resource_cover', name: f.name, data, max_kb: 400 });
+        it.cover = res.rel;
+        coverIn.value = res.rel;
+        syncCoverUI();
+        toast(`封面已上传：${res.name}`);
+      }));
+      clearBtn.addEventListener('click', () => {
+        it.cover = '';
+        coverIn.value = '';
+        syncCoverUI();
+      });
+      card.querySelector('.rs-up').addEventListener('click', () => {
+        if (idx <= 0) return;
+        syncCurrentResourceGroupFromDOM();
+        const arr = S.resources.groups[S.resGroupIdx].items;
+        [arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]];
+        renderResourceItems(arr);
+        renderResourceGroupList();
+      });
+      card.querySelector('.rs-down').addEventListener('click', () => {
+        syncCurrentResourceGroupFromDOM();
+        const arr = S.resources.groups[S.resGroupIdx].items;
+        if (idx >= arr.length - 1) return;
+        [arr[idx], arr[idx + 1]] = [arr[idx + 1], arr[idx]];
+        renderResourceItems(arr);
+        renderResourceGroupList();
+      });
+      card.querySelector('.rs-del').addEventListener('click', () => {
+        syncCurrentResourceGroupFromDOM();
+        const arr = S.resources.groups[S.resGroupIdx].items;
+        arr.splice(idx, 1);
+        renderResourceItems(arr);
+        renderResourceGroupList();
+      });
+      box.appendChild(card);
+    });
+  }
+
+  function addResourceItemToCurrentGroup() {
+    if (!S.resources) return;
+    if (S.resGroupIdx < 0) {
+      if (!S.resources.groups.length) {
+        S.resources.groups.push({ title: '应用与安装包', note: '', items: [] });
+      }
+      S.resGroupIdx = 0;
+    } else {
+      syncCurrentResourceGroupFromDOM();
+    }
+    const g = S.resources.groups[S.resGroupIdx];
+    g.items.push({
+      name: '',
+      href: 'https://',
+      summary: '',
+      detail: '',
+      badge: '',
+      cta: '',
+      code: '',
+      cover: '',
+      images: [],
+      tags: [],
+    });
+    renderResourceGroupList();
+    fillResourceGroupForm();
+    const names = $$('#res-items .rs-name');
+    names.at(-1)?.focus();
+  }
+
+  function addNewResourceGroup() {
+    if (!S.resources) return;
+    syncCurrentResourceGroupFromDOM();
+    S.resources.groups.push({
+      title: '新分类',
+      note: '',
+      items: [],
+    });
+    S.resGroupIdx = S.resources.groups.length - 1;
+    renderResourceGroupList();
+    fillResourceGroupForm();
+    $('#rs-group-title')?.focus();
+    $('#rs-group-title')?.select();
+  }
+
+  function moveCurrentResourceGroup(delta) {
+    if (!S.resources || S.resGroupIdx < 0) return;
+    const next = S.resGroupIdx + delta;
+    if (next < 0 || next >= S.resources.groups.length) return;
+    syncCurrentResourceGroupFromDOM();
+    const groups = S.resources.groups;
+    [groups[S.resGroupIdx], groups[next]] = [groups[next], groups[S.resGroupIdx]];
+    S.resGroupIdx = next;
+    renderResourceGroupList();
+    fillResourceGroupForm();
+  }
+
+  async function deleteCurrentResourceGroup() {
+    if (!S.resources || S.resGroupIdx < 0) return;
+    if (S.resources.groups.length <= 1) {
+      toast('至少需要保留一个资源分类', true);
+      return;
+    }
+    syncCurrentResourceGroupFromDOM();
+    const g = S.resources.groups[S.resGroupIdx];
+    const ok = await askConfirm(
+      '删除这个资源分类？',
+      `会移除分类「<code>${esc(g.title || '未命名')}</code>」及其下 ${g.items.length} 条资源。`,
+      { okText: '删除分类', danger: true }
+    );
+    if (!ok) return;
+    S.resources.groups.splice(S.resGroupIdx, 1);
+    S.resGroupIdx = Math.max(0, S.resGroupIdx - 1);
+    await saveResources();
+  }
+
+  async function saveResources() {
+    if (!S.resources) return;
+    syncCurrentResourceGroupFromDOM();
+    const intro = String(S.resources.intro || '').trim();
+    if (intro.length > 320) return toast('页面导语最多 320 字', true);
+
+    const groups = S.resources.groups.map((g) => ({
+      title: String(g.title || '').trim(),
+      note: String(g.note || '').trim(),
+      items: (g.items || [])
+        .map((it) => ({
+          name: String(it.name || '').trim(),
+          href: String(it.href || '').trim(),
+          summary: String(it.summary || '').trim(),
+          detail: String(it.detail || '').trim(),
+          badge: String(it.badge || '').trim(),
+          cta: String(it.cta || '').trim(),
+          code: String(it.code || '').trim(),
+          cover: String(it.cover || '').trim(),
+          images: Array.isArray(it.images) ? it.images.map((s) => String(s || '').trim()).filter(Boolean).slice(0, 4) : [],
+          tags: Array.isArray(it.tags)
+            ? it.tags.map((t) => String(t || '').trim()).filter(Boolean).slice(0, 4)
+            : parseResourceTagsInput(it.tags),
+        }))
+        .filter((it) => (
+          it.name
+          || (it.href && it.href !== 'https://')
+          || it.summary
+          || it.detail
+          || it.badge
+          || it.cta
+          || it.code
+          || it.cover
+          || it.images.length
+          || it.tags.length
+        )),
+    }));
+
+    for (let gi = 0; gi < groups.length; gi++) {
+      const g = groups[gi];
+      if (!g.title) return toast(`第 ${gi + 1} 个分类名称不能为空`, true);
+      for (let ii = 0; ii < g.items.length; ii++) {
+        const it = g.items[ii];
+        if (!it.name) return toast(`分类「${g.title}」第 ${ii + 1} 条资源还没有填名称`, true);
+        if (!it.href || it.href === 'https://') return toast(`资源「${it.name}」还没有填有效链接`, true);
+        if (!it.summary) return toast(`资源「${it.name}」还没有填一句话简介`, true);
+      }
+    }
+
+    const saved = await POST('/api/resources', {
+      intro,
+      groups,
+      base_revision: S.resources.revision,
+    });
+    S.resources.revision = saved.revision;
+    S.resources.intro = intro;
+    S.resources.groups = groups;
+    renderResourceGroupList();
+    if (S.resGroupIdx >= 0) fillResourceGroupForm();
+    toast(`已保存资源（${saved.groups} 个分类，共 ${saved.count} 条）`);
+  }
+
+  function initResources() {
+    $('#btn-new-resource').addEventListener('click', () => addResourceItemToCurrentGroup());
+    $('#btn-add-res-item').addEventListener('click', () => addResourceItemToCurrentGroup());
+    $('#btn-new-res-group').addEventListener('click', () => addNewResourceGroup());
+    $('#btn-refresh-resources').addEventListener('click', () => loadResources().then(() => toast('重新读过了')).catch((e) => toast(e.message, true)));
+    $('#btn-save-resources').addEventListener('click', () => saveResources().catch((e) => toast(e.message, true)));
+    $('#btn-del-res-group').addEventListener('click', () => deleteCurrentResourceGroup().catch((e) => toast(e.message, true)));
+    $('#btn-res-group-up').addEventListener('click', () => moveCurrentResourceGroup(-1));
+    $('#btn-res-group-down').addEventListener('click', () => moveCurrentResourceGroup(1));
+    $('#rs-intro').addEventListener('input', () => {
+      if (S.resources) S.resources.intro = $('#rs-intro').value.trim();
+    });
+    $('#rs-group-title').addEventListener('input', () => {
+      if (S.resources && S.resGroupIdx >= 0 && S.resources.groups[S.resGroupIdx]) {
+        S.resources.groups[S.resGroupIdx].title = $('#rs-group-title').value.trim();
+        renderResourceGroupList();
+      }
+    });
+    $('#rs-group-note').addEventListener('input', () => {
+      if (S.resources && S.resGroupIdx >= 0 && S.resources.groups[S.resGroupIdx]) {
+        S.resources.groups[S.resGroupIdx].note = $('#rs-group-note').value.trim();
       }
     });
   }
@@ -3036,6 +3527,7 @@
     if (S.view === 'log') return saveLog();
     if (S.view === 'talks') return saveTalk();
     if (S.view === 'links') return saveLinks();
+    if (S.view === 'resources') return saveResources();
     toast('这一页没有要保存的东西');
     return Promise.resolve();
   };
@@ -3082,6 +3574,7 @@
     initLog();
     initTalks();
     initLinks();
+    initResources();
     initPhotos();
     initComments();
     initPublish();

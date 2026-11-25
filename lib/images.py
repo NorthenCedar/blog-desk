@@ -262,32 +262,74 @@ def save_for_gallery(content, album: str, filename: str, data: bytes,
             "report": report, "rel": f"./{target.name}"}
 
 
-def save_for_link_avatar(content, filename: str, data: bytes,
-                         max_kb: int = 200, compress: bool = True) -> dict:
-    """存进 public/avatars/friends/，用内容摘要命名且仅保留纯英文名。"""
-    _ = filename
+def _save_public_image(
+    content,
+    subdir: tuple[str, ...],
+    prefix: str,
+    rel_base: str,
+    dir_tag: str,
+    data: bytes,
+    max_kb: int,
+    max_edge: int,
+    compress: bool,
+) -> dict:
+    """按内容摘要保存站点静态图片到 public 子目录，仅使用纯英文文件名。"""
     ext = real_ext(data)
     if ext is None or ext not in IMAGE_EXT:
         raise ImageError("这不是能识别的图片文件")
     report = {}
     if compress:
-        data, report = compress_image(data, max_kb, max_edge=512)
+        data, report = compress_image(data, max_kb, max_edge=max_edge)
         ext = real_ext(data) or ext
     digest = hashlib.sha256(data).hexdigest()[:12]
-    d = content.repo / "public" / "avatars" / "friends"
+    d = content.repo.joinpath(*subdir)
     d.mkdir(parents=True, exist_ok=True)
-    target = d / f"friend-{digest}{ext}"
+    target = d / f"{prefix}-{digest}{ext}"
     if not (target.is_file() and target.read_bytes() == data):
         target.write_bytes(data)
     report.setdefault("stored_as", target.suffix.lower())
     return {
         "ok": True,
         "name": target.name,
-        "dir": "link_avatar",
+        "dir": dir_tag,
         "path": str(target),
         "report": report,
-        "rel": f"/avatars/friends/{target.name}",
+        "rel": f"{rel_base}/{target.name}",
     }
+
+
+def save_for_link_avatar(content, filename: str, data: bytes,
+                         max_kb: int = 200, compress: bool = True) -> dict:
+    """存进 public/avatars/friends/，用内容摘要命名且仅保留纯英文名。"""
+    _ = filename
+    return _save_public_image(
+        content,
+        ("public", "avatars", "friends"),
+        "friend",
+        "/avatars/friends",
+        "link_avatar",
+        data,
+        max_kb,
+        512,
+        compress,
+    )
+
+
+def save_for_resource_cover(content, filename: str, data: bytes,
+                            max_kb: int = 400, compress: bool = True) -> dict:
+    """存进 public/resources/covers/，用于资源卡片封面展示。"""
+    _ = filename
+    return _save_public_image(
+        content,
+        ("public", "resources", "covers"),
+        "res",
+        "/resources/covers",
+        "resource_cover",
+        data,
+        max_kb,
+        1200,
+        compress,
+    )
 
 
 def list_gallery_photos(content, album: str | None = None) -> list[dict]:

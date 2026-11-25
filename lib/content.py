@@ -622,6 +622,215 @@ class Content:
         revision = self._write(md, new_text, nl, base_revision)
         return {"ok": True, "groups": len(groups), "count": total_items, "revision": revision}
 
+    # ---------- 资源 ----------
+
+    def read_resources(self) -> dict:
+        """读取 content/pages/resources.md 的分类、条目与当前修订哈希。"""
+        md = self.pages_dir / "resources.md"
+        if not md.is_file():
+            raise ContentError("找不到资源页面：content/pages/resources.md")
+        text, nl = self._read(md)
+        fm_text, body = split_frontmatter(text)
+        fm = parse_frontmatter(fm_text)
+        head, _ = _fm_head_upto(text, "groups")
+        groups = []
+        for g in (fm.get("groups") or []):
+            if not isinstance(g, dict):
+                continue
+            items = []
+            for it in (g.get("items") or []):
+                if not isinstance(it, dict):
+                    continue
+                raw_tags = it.get("tags") or []
+                if isinstance(raw_tags, str):
+                    tags = [t.strip() for t in re.split(r"[,，]+", raw_tags) if t.strip()][:4]
+                elif isinstance(raw_tags, list):
+                    tags = [str(t or "").strip() for t in raw_tags if str(t or "").strip()][:4]
+                else:
+                    tags = []
+                raw_images = it.get("images") or []
+                if isinstance(raw_images, list):
+                    images = [str(x or "").strip() for x in raw_images if str(x or "").strip()][:4]
+                else:
+                    images = []
+                items.append({
+                    "name": str(it.get("name") or ""),
+                    "href": str(it.get("href") or ""),
+                    "summary": str(it.get("summary") or ""),
+                    "detail": str(it.get("detail") or ""),
+                    "badge": str(it.get("badge") or ""),
+                    "cta": str(it.get("cta") or ""),
+                    "code": str(it.get("code") or ""),
+                    "cover": str(it.get("cover") or ""),
+                    "images": images,
+                    "tags": tags,
+                })
+            groups.append({
+                "title": str(g.get("title") or ""),
+                "note": str(g.get("note") or ""),
+                "items": items,
+            })
+        return {
+            "groups": groups,
+            "revision": self.revision(md),
+            "title": str(fm.get("title") or "资源"),
+            "intro": str(fm.get("intro") or ""),
+            "head": head,
+            "body": body,
+            "newline": nl,
+        }
+
+    def write_resources(
+        self,
+        groups: list[dict],
+        intro: str | None = None,
+        base_revision: str | None = None,
+    ) -> dict:
+        """校验并写回 content/pages/resources.md，保留 frontmatter 注释与导语。"""
+        md = self.pages_dir / "resources.md"
+        if not md.is_file():
+            raise ContentError("找不到资源页面：content/pages/resources.md")
+        self._check_revision(md, base_revision)
+        text, nl = self._read(md)
+        head, _ = _fm_head_upto(text, "groups")
+        _, body = split_frontmatter(text)
+
+        if intro is not None:
+            intro_clean = str(intro).strip()
+            if len(intro_clean) > 320:
+                raise ContentError("资源页导语最多 320 字")
+            head_lines = head.split("\n") if head else []
+            out_head: list[str] = []
+            replaced = False
+            for line in head_lines:
+                if re.match(r"^intro\s*:", line):
+                    if not replaced and intro_clean:
+                        out_head.append(f"intro: {yaml_scalar(intro_clean)}")
+                    replaced = True
+                else:
+                    out_head.append(line)
+            if not replaced and intro_clean:
+                out_head.append(f"intro: {yaml_scalar(intro_clean)}")
+            head = "\n".join(out_head)
+
+        if not isinstance(groups, list) or not groups:
+            raise ContentError("资源页至少需要保留一个分类")
+        if len(groups) > 20:
+            raise ContentError("资源分类最多 20 个")
+
+        lines = ["groups:"]
+        total_items = 0
+        for gi, g in enumerate(groups):
+            if not isinstance(g, dict):
+                raise ContentError(f"第 {gi + 1} 个分类格式无效")
+            title = str(g.get("title") or "").strip()
+            if not title:
+                raise ContentError(f"第 {gi + 1} 个分类标题不能为空")
+            if len(title) > 60:
+                raise ContentError(f"分类「{title}」标题最多 60 字")
+            note = str(g.get("note") or "").strip()
+            if len(note) > 200:
+                raise ContentError(f"分类「{title}」说明最多 200 字")
+            items = g.get("items") or []
+            if not isinstance(items, list):
+                raise ContentError(f"分类「{title}」条目列表格式无效")
+            if len(items) > 60:
+                raise ContentError(f"分类「{title}」下最多放 60 条资源")
+
+            lines.append(f"  - title: {yaml_scalar(title)}")
+            if note:
+                lines.append(f"    note: {yaml_scalar(note)}")
+            if not items:
+                lines.append("    items: []")
+                continue
+
+            lines.append("    items:")
+            for ii, it in enumerate(items):
+                if not isinstance(it, dict):
+                    raise ContentError(f"分类「{title}」第 {ii + 1} 条资源格式无效")
+                name = str(it.get("name") or "").strip()
+                if not name:
+                    raise ContentError(f"分类「{title}」第 {ii + 1} 条资源名称不能为空")
+                if len(name) > 80:
+                    raise ContentError(f"资源「{name}」名称最多 80 字")
+                href = self._validate_link_href(it.get("href", ""), f"资源「{name}」链接")
+                if len(href) > 500:
+                    raise ContentError(f"资源「{name}」链接最多 500 字符")
+                summary = str(it.get("summary") or "").strip()
+                if not summary:
+                    raise ContentError(f"资源「{name}」的一句话简介不能为空")
+                if len(summary) > 160:
+                    raise ContentError(f"资源「{name}」简介最多 160 字")
+
+                detail = str(it.get("detail") or "").strip()
+                if len(detail) > 1200:
+                    raise ContentError(f"资源「{name}」详细说明最多 1200 字")
+                badge = str(it.get("badge") or "").strip()
+                if len(badge) > 40:
+                    raise ContentError(f"资源「{name}」角标最多 40 字")
+                cta = str(it.get("cta") or "").strip()
+                if len(cta) > 24:
+                    raise ContentError(f"资源「{name}」按钮文案最多 24 字")
+                code = str(it.get("code") or "").strip()
+                if len(code) > 64:
+                    raise ContentError(f"资源「{name}」提取码最多 64 字")
+                cover = str(it.get("cover") or "").strip()
+                if cover:
+                    cover = self._validate_link_href(cover, f"资源「{name}」封面地址")
+                    if len(cover) > 400:
+                        raise ContentError(f"资源「{name}」封面地址最多 400 字符")
+
+                raw_images = it.get("images") or []
+                if not isinstance(raw_images, list):
+                    raise ContentError(f"资源「{name}」内容配图格式无效")
+                images: list[str] = []
+                for img_raw in raw_images:
+                    img_s = str(img_raw or "").strip()
+                    if not img_s:
+                        continue
+                    img_s = self._validate_link_href(img_s, f"资源「{name}」内容配图地址")
+                    if len(img_s) > 400:
+                        raise ContentError(f"资源「{name}」内容配图地址最多 400 字符")
+                    images.append(img_s)
+                if len(images) > 4:
+                    raise ContentError(f"资源「{name}」最多填写 4 张内容配图")
+
+                raw_tags = it.get("tags") or []
+                if isinstance(raw_tags, str):
+                    tags = [t.strip() for t in re.split(r"[,，]+", raw_tags) if t.strip()]
+                elif isinstance(raw_tags, list):
+                    tags = [str(t or "").strip() for t in raw_tags if str(t or "").strip()]
+                else:
+                    raise ContentError(f"资源「{name}」标签格式无效")
+                if len(tags) > 4:
+                    raise ContentError(f"资源「{name}」最多填写 4 个标签")
+                for tag in tags:
+                    if len(tag) > 20:
+                        raise ContentError(f"资源「{name}」标签「{tag}」最多 20 字")
+
+                lines.append(f"      - name: {yaml_scalar(name)}")
+                lines.append(f"        href: {yaml_scalar(href)}")
+                lines.append(f"        summary: {yaml_scalar(summary)}")
+                if detail:
+                    lines.append(f"        detail: {yaml_scalar(detail)}")
+                if badge:
+                    lines.append(f"        badge: {yaml_scalar(badge)}")
+                if cta:
+                    lines.append(f"        cta: {yaml_scalar(cta)}")
+                if code:
+                    lines.append(f"        code: {yaml_scalar(code)}")
+                if cover:
+                    lines.append(f"        cover: {yaml_scalar(cover)}")
+                if images:
+                    lines.append(f"        images: [{', '.join(yaml_scalar(im) for im in images)}]")
+                if tags:
+                    lines.append(f"        tags: [{', '.join(yaml_scalar(t) for t in tags)}]")
+                total_items += 1
+
+        new_text = f"---\n{head}\n" + "\n".join(lines) + "\n---\n" + body
+        revision = self._write(md, new_text, nl, base_revision)
+        return {"ok": True, "groups": len(groups), "count": total_items, "revision": revision}
+
     # ---------- 相册 ----------
 
     def list_albums(self) -> list[dict]:

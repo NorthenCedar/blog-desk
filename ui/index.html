@@ -36,6 +36,7 @@
       <button data-view="log"><span class="ico">☰</span>日志</button>
       <button data-view="talks"><span class="ico">◎</span>说说</button>
       <button data-view="links"><span class="ico">⛓</span>友链</button>
+      <button data-view="resources"><span class="ico">◈</span>资源</button>
       <button data-view="photos"><span class="ico">▤</span>相册照片</button>
       <div class="sep"></div>
       <button data-view="comments"><span class="ico">✉</span>留言</button>
@@ -363,6 +364,58 @@
               <div class="row spread">
                 <button class="btn primary" id="btn-save-links">保存友链 <kbd class="kbd">Ctrl+S</kbd></button>
                 <button class="btn danger sm" id="btn-del-link-group">删除这个分组</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 资源 ── -->
+      <section class="view" data-view="resources">
+        <div class="card" style="margin-bottom:var(--sp-3);padding:var(--sp-3)">
+          <div class="stack" style="gap:8px">
+            <label class="field"><span>intro 页面导语（显示在资源页顶部，可空，最多 320 字）</span>
+              <input type="text" id="rs-intro" maxlength="320" placeholder="自用与收藏的小工具、电子书和顺手好用的网站。往下滑动展开立体跑道，点开卡片查看详情与提取码。">
+            </label>
+            <div style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted)">
+              大体积安装包、电子书建议放在 Cloudflare R2、GitHub Releases 或网盘，在此填写链接与提取码；小尺寸卡片封面可上传到 <code>public/resources/covers/</code>。
+            </div>
+          </div>
+        </div>
+        <div class="split">
+          <div>
+            <div class="row tight" style="margin-bottom:var(--sp-3)">
+              <button class="btn primary sm" id="btn-new-resource">＋ 添加资源</button>
+              <button class="btn sm" id="btn-new-res-group">＋ 分类</button>
+              <button class="btn sm" id="btn-refresh-resources">重新读取</button>
+            </div>
+            <div class="list" id="res-group-list"></div>
+          </div>
+          <div class="stack">
+            <div class="empty" id="res-empty">左边选择一个分类，或点击「＋ 分类」新增资源种类。</div>
+            <div id="res-form" style="display:none" class="stack">
+              <div class="row" style="align-items:flex-end">
+                <label class="field grow"><span>title 分类名称</span>
+                  <input type="text" id="rs-group-title" maxlength="60" placeholder="例如：应用与安装包"></label>
+                <label class="field grow"><span>note 分类说明（可空）</span>
+                  <input type="text" id="rs-group-note" maxlength="200" placeholder="例如：常装软件与工具集合"></label>
+                <div class="row tight">
+                  <button type="button" class="btn sm" id="btn-res-group-up" title="上移分类">↑</button>
+                  <button type="button" class="btn sm" id="btn-res-group-down" title="下移分类">↓</button>
+                </div>
+              </div>
+              <div class="stack" style="gap:var(--sp-2)">
+                <div class="spread">
+                  <span style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted)">
+                    items 本分类资源（名称 / 链接 / 一句话简介为必填，其余按需填写）
+                  </span>
+                  <button class="btn primary sm" id="btn-add-res-item">＋ 在本类添加资源</button>
+                </div>
+                <div id="res-items" class="stack" style="gap:10px"></div>
+              </div>
+              <div class="row spread">
+                <button class="btn primary" id="btn-save-resources">保存资源 <kbd class="kbd">Ctrl+S</kbd></button>
+                <button class="btn danger sm" id="btn-del-res-group">删除这个分类</button>
               </div>
             </div>
           </div>
