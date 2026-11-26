@@ -3,7 +3,7 @@
 写作台是「北杉札记」的 Windows 桌面编辑器。可视化界面和 Markdown 源码读写同一份文件，
 支持文章、说说、相册和造物台。保存先写入本地，发布页再构建、提交和推送博客。Cloudflare Pages 部署成功后，线上才会更新。
 
-[访问北杉札记](https://northcedar.top) · [博客源码](https://github.com/NorthenCedar/personal)
+[访问北杉札记](https://northcedar.top) · [博客源码](https://github.com/NorthenCedar/my-blog)
 
 ```
 北杉札记（Astro 站点）        写作台（本仓库）

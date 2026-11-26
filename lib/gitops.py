@@ -26,7 +26,7 @@ from pathlib import Path
 from lib import proc
 
 API = "https://api.github.com"
-REPO = "NorthenCedar/personal"
+REPO = "NorthenCedar/my-blog"
 
 
 class GitError(Exception):

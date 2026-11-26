@@ -3444,7 +3444,7 @@
         toast(e.message, true);
       }
     }));
-    $('#lnk-gh').href = 'https://github.com/NorthenCedar/personal';
+    $('#lnk-gh').href = 'https://github.com/NorthenCedar/my-blog';
     $('#lnk-cf').href = 'https://dash.cloudflare.com/';
   }
 
